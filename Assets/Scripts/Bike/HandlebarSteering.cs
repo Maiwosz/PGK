@@ -77,6 +77,15 @@ public class HandlebarSteering : MonoBehaviour
         transform.localRotation = Quaternion.AngleAxis(Angle, Vector3.up);
     }
 
+    /// <summary>Puszcza uchwyt i prostuje kierownicę (np. po upadku).</summary>
+    public void ResetSteering()
+    {
+        if (grabbed != null) EndGrab();
+        Angle = 0f;
+        targetAngle = 0f;
+        transform.localRotation = Quaternion.identity;
+    }
+
     void OnDisable()
     {
         if (grabbed != null) grabbed.SetState(GripHandle.State.Idle);

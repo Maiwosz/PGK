@@ -203,6 +203,15 @@ public class PedalDrive : MonoBehaviour
         return DriveAccelerationAt(GearRatio, speed) * profile * PedalSpeedFactor;
     }
 
+    /// <summary>Przerwanie pedałowania (np. upadek): czyści stan skoku, ale zostawia staminę pomniejszoną o staminaLoss.</summary>
+    public void Interrupt(float staminaLoss)
+    {
+        float keep = stamina;
+        ResetState();
+        stamina = Mathf.Clamp01(keep - staminaLoss);
+        Emit("interrupted");
+    }
+
     public void ResetState()
     {
         last = Foot.None;

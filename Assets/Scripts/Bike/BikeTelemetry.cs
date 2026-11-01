@@ -83,6 +83,7 @@ public class BikeTelemetry : MonoBehaviour
 
         t0 = Time.time;
         pedals.Logged += OnPedalEvent;
+        bike.Logged += OnPedalEvent;
         Log("session_start");
     }
 
@@ -217,6 +218,7 @@ public class BikeTelemetry : MonoBehaviour
     {
         if (closed || samples == null) return;
         if (pedals != null) pedals.Logged -= OnPedalEvent;
+        if (bike != null) bike.Logged -= OnPedalEvent;
         Log("session_end");
         closed = true;
 

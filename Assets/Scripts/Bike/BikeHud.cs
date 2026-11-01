@@ -26,9 +26,10 @@ public class BikeHud : MonoBehaviour
         float u = Mathf.Max(16f, Screen.height / 32f);
         DrawTopLeft(u);
         if (pedals != null) DrawBottom(u);
+        if (bike.Fallen) DrawFallen(u);
 
         Label(new Rect(u, Screen.height - u * 2.6f, Screen.width - u * 2f, u * 1.2f),
-            "A / D – pedałuj (trzymaj do końca skoku, naprzemiennie)  |  LPM na uchwycie – kierowanie  |  R – reset",
+            "A / D – pedałuj (trzymaj do końca skoku, naprzemiennie)  |  LPM na uchwycie – kierowanie  |  S – cofanie (na postoju)  |  po upadku: przytrzymaj Spację  |  R – reset",
             u * 0.7f, Dim, TextAnchor.MiddleLeft);
         Label(new Rect(u, Screen.height - u * 1.5f, Screen.width - u * 2f, u * 1.2f),
             "Na trzymanym uchwycie:  Spacja – hamulec (lewy = przód, prawy = tył)  |  Shift / Ctrl – bieg wyżej / niżej (lewy 1–3, prawy 1–7)",
@@ -55,7 +56,52 @@ public class BikeHud : MonoBehaviour
             string s = bike.FrontBrake && bike.RearBrake ? "HAMULEC: przedni + tylny"
                      : bike.FrontBrake ? "HAMULEC: przedni (lewy)" : "HAMULEC: tylny (prawy)";
             Label(new Rect(u, y, 600f, u * 1.2f), s, u * 0.85f, new Color(1f, 0.4f, 0.4f), TextAnchor.MiddleLeft, FontStyle.Bold);
+            y += u * 1.3f;
         }
+
+        DrawGrip(u, y);
+    }
+
+    /// <summary>Pasek obciążenia przyczepności (zakręt + hamowanie); pojawia się, gdy robi się ślisko.</summary>
+    void DrawGrip(float u, float y)
+    {
+        if (bike.Fallen) return;
+        float load = bike.GripLoad;
+        float risk = bike.FallRisk;
+        if (load < 0.6f && risk < 0.02f) return;
+
+        var r = new Rect(u, y + u * 0.15f, u * 9f, u * 0.7f);
+        Fill(r, Panel);
+        Color c = load < 0.8f ? Green : load < 1f ? Gold : new Color(1f, 0.3f, 0.25f);
+        Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(load / 1.25f), r.height), c);
+        Fill(new Rect(r.x + r.width * 0.8f - 1f, r.y - 2f, 2f, r.height + 4f), Color.white);   // granica poślizgu
+        Frame(r, 1f, Dim);
+
+        string label = risk > 0.02f ? $"{bike.RiskLabel}! {risk * 100f:0}%" : "przyczepność";
+        Label(new Rect(r.xMax + u * 0.5f, y, 600f, u * 1.0f), label, u * 0.8f,
+            risk > 0.02f ? new Color(1f, 0.4f, 0.4f) : Dim, TextAnchor.MiddleLeft, risk > 0.02f ? FontStyle.Bold : FontStyle.Normal);
+    }
+
+    /// <summary>Ekran leżenia: opis upadku i pasek wstawania (przytrzymaj Spację).</summary>
+    void DrawFallen(float u)
+    {
+        float cx = Screen.width * 0.5f;
+        float cy = Screen.height * 0.33f;
+
+        Label(new Rect(cx - 400f, cy - u * 2.2f, 800f, u * 2.4f), "UPADEK", u * 2.2f,
+            new Color(1f, 0.35f, 0.3f), TextAnchor.MiddleCenter, FontStyle.Bold);
+        Label(new Rect(cx - 400f, cy, 800f, u * 1.2f), bike.FallText, u * 0.9f, Color.white, TextAnchor.MiddleCenter);
+
+        bool ready = bike.CanStandUp;
+        string prompt = ready ? "Przytrzymaj SPACJĘ, aby wstać"
+                              : bike.Speed > 0.5f ? "Ślizgasz się…" : "Leżysz…";
+        Label(new Rect(cx - 400f, cy + u * 1.5f, 800f, u * 1.2f), prompt, u * 1.0f,
+            ready ? Gold : Dim, TextAnchor.MiddleCenter, FontStyle.Bold);
+
+        var bar = new Rect(cx - u * 6f, cy + u * 3f, u * 12f, u * 0.8f);
+        Fill(bar, Panel);
+        Fill(new Rect(bar.x, bar.y, bar.width * bike.StandProgress, bar.height), Green);
+        Frame(bar, 1f, Dim);
     }
 
     // ------------------------------------------------------------ dół ekranu
