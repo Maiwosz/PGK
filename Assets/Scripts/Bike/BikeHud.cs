@@ -17,6 +17,7 @@ public class BikeHud : MonoBehaviour
     static readonly Color Dim = new Color(0.55f, 0.55f, 0.55f);
 
     GUIStyle text;
+    TrainController train;
 
     void OnGUI()
     {
@@ -25,6 +26,11 @@ public class BikeHud : MonoBehaviour
 
         float u = Mathf.Max(16f, Screen.height / 32f);
         DrawTopLeft(u);
+        if (train == null) train = Object.FindFirstObjectByType<TrainController>();
+        if (train != null)
+            Label(new Rect(Screen.width * 0.5f - 300f, u, 600f, u * 1.4f),
+                $"POCIĄG  {train.SpeedKmh:0} km/h   •   {train.DistanceTo(bike.transform.position):0} m od Ciebie   •   do mostu {train.RemainingDistance:0} m",
+                u * 0.9f, Gold, TextAnchor.MiddleCenter, FontStyle.Bold);
         if (pedals != null) DrawBottom(u);
         if (bike.Fallen) DrawFallen(u);
 
