@@ -42,6 +42,18 @@ public class BikeController : MonoBehaviour
     [Tooltip("Wytracanie ruchu wstecz po puszczeniu S.")]
     [SerializeField] float reverseDrag = 2.5f;             // m/s^2
 
+    [Header("Teren")]
+    [Tooltip("Jak mocno nachylenie terenu hamuje (pod górę) i napędza (z góry) rower: 1 = prawdziwa grawitacja.")]
+    [SerializeField, Range(0f, 1.5f)] float slopeInfluence = 0.5f;
+    [Tooltip("Ile (m/s^2) stoku potrafi utrzymać stojący rowerzysta nogami; bardziej stromy stok zaczyna zsuwać rower w tył. Hamulec dodaje swoje.")]
+    [SerializeField] float standstillHold = 1.2f;
+    [Tooltip("Jak daleko przed rowerem (m) sprawdzamy teren, by wjechać na próg zgodnie z jego nachyleniem.")]
+    [SerializeField] float lookAhead = 1.1f;
+    [Tooltip("Jak daleko za rowerem (m) – razem z lookAhead wyznacza bazę, z której liczone jest nachylenie dla grawitacji.")]
+    [SerializeField] float lookBehind = 0.9f;
+    [Tooltip("Maksymalna prędkość zjazdu tyłem ze stoku (m/s).")]
+    [SerializeField] float maxRollBackSpeed = 8f;
+
     [Header("Skręt")]
     [Tooltip("Jaka część obrotu kierownicy przechodzi na koło (reszta to 'luz' geometrii).")]
     [SerializeField] float steerRatio = 0.5f;
@@ -107,6 +119,11 @@ public class BikeController : MonoBehaviour
     float yawRate;              // rad/s, + = w prawo
     float lean;                 // stopnie, + = w prawo
     Vector3 lastForward;
+    Vector3 groundTangent = Vector3.forward;
+    Vector3 groundNormal = Vector3.up;
+    float slopeAccel;
+    float slopePitch;
+    bool grounded;
     Vector3 startPosition;
     float startYaw;
     bool reverseHeld;
@@ -177,9 +194,56 @@ public class BikeController : MonoBehaviour
         }
     }
 
+    /// <summary>Wyznacza nachylenie podłoża pod rowerem: kierunek jazdy wzdłuż stoku i przyspieszenie od grawitacji.</summary>
+    void SampleGround()
+    {
+        Vector3 flat = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+        slopeAccel = 0f;
+        groundTangent = flat;
+        if (Physics.Raycast(rb.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 1.2f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            Vector3 t = Vector3.ProjectOnPlane(flat, hit.normal);
+            if (t.sqrMagnitude > 1e-4f)
+            {
+                t.Normalize();
+                Vector3 accelDir = t;
+
+                // Teren z siatki 2 m ma ostre „fasetki” (krótka górka = nagły próg 15–20°). Dwa dodatkowe promienie:
+                //  - przed rowerem: jeśli tam teren wznosi się szybciej niż pod środkiem, kierujemy prędkość już
+                //    wzdłuż tego wzniesienia, żeby przednie koło nie uderzało w próg i nie traciło prędkości,
+                //  - z tyłu: nachylenie dla grawitacji liczymy ze „średniej” między tyłem a przodem (ok. 2 m),
+                //    więc krótki próg nie hamuje roweru jak ściana.
+                bool hasFront = Physics.Raycast(rb.position + flat * lookAhead + Vector3.up * 0.5f, Vector3.down,
+                    out RaycastHit front, 1.2f + lookAhead * 0.7f, ~0, QueryTriggerInteraction.Ignore);
+                bool hasRear = Physics.Raycast(rb.position - flat * lookBehind + Vector3.up * 0.5f, Vector3.down,
+                    out RaycastHit rear, 1.2f + lookBehind * 0.7f, ~0, QueryTriggerInteraction.Ignore);
+                if (hasFront)
+                {
+                    Vector3 ahead = (front.point - hit.point);
+                    if (ahead.sqrMagnitude > 0.04f)
+                    {
+                        ahead.Normalize();
+                        if (ahead.y > t.y) t = ahead;
+                    }
+                    if (hasRear)
+                    {
+                        Vector3 span = front.point - rear.point;
+                        if (span.sqrMagnitude > 0.25f) accelDir = span.normalized;
+                    }
+                }
+                groundTangent = t;
+                slopeAccel = Vector3.Dot(Physics.gravity, accelDir) * slopeInfluence;   // < 0 pod górę
+            }
+            groundNormal = hit.normal;
+            grounded = true;
+        }
+        else grounded = false;
+    }
+
     void FixedUpdate()
     {
         float dt = Time.fixedDeltaTime;
+        SampleGround();
 
         // Kolizje: jeśli fizyka wyhamowała ruch wzdłuż kierunku jazdy, przejmujemy tę prędkość.
         float actual = Vector3.Dot(rb.linearVelocity, lastForward);
@@ -211,13 +275,25 @@ public class BikeController : MonoBehaviour
         }
         else if (speed < 0f)
         {
-            // Toczenie się do tyłu po puszczeniu S: tarcie / hamulec / pedałowanie wyhamowują ruch.
-            speed = Mathf.Min(0f, speed + (drive + reverseDrag + brake) * dt);
+            // Toczenie się do tyłu (po puszczeniu S albo zjazd tyłem ze stoku): tarcie / hamulec / pedałowanie
+            // wyhamowują ruch, a stok pod górę nadal ciągnie rower w tył.
+            float pull = Mathf.Max(0f, -(drive + slopeAccel));
+            float resist = brake + Mathf.Max(rollingResistance, reverseDrag - pull);
+            speed = Mathf.Min(0f, speed + (drive + slopeAccel + resist) * dt);
+            speed = Mathf.Max(speed, -maxRollBackSpeed);
         }
         else
         {
             float decel = rollingResistance + airDrag * speed * speed + brake;
-            speed = Mathf.Clamp(speed + (drive - decel) * dt, 0f, maxSpeed);
+            float next = speed + (drive - decel + slopeAccel) * dt;
+
+            // Pod górę: gdy napęd nie wystarcza, a stok ciągnie mocniej niż trzyma rowerzysta (nogi, hamulec),
+            // rower zatrzymuje się i zaczyna zjeżdżać tyłem.
+            float pull = Mathf.Max(0f, -(drive + slopeAccel));
+            if (next < 0f && pull > rollingResistance + brake + standstillHold)
+                speed = Mathf.Max(next, -maxRollBackSpeed);
+            else
+                speed = Mathf.Clamp(next, 0f, maxSpeed);
         }
 
         // Model rowerowy: yaw rate = v / L * tan(delta). Przy cofaniu v < 0 odwraca kierunek skrętu (jak w prawdziwym rowerze).
@@ -277,10 +353,16 @@ public class BikeController : MonoBehaviour
         rb.MoveRotation(rotation);
         rb.angularVelocity = Vector3.zero;
 
-        Vector3 v = forward * speed;
-        v.y = rb.linearVelocity.y;
+        // Na ziemi jedziemy wzdłuż stoku (prędkość ma składową pionową), w powietrzu zostaje fizyka.
+        // Grawitację fizyki wyłączamy na ziemi: wpływ nachylenia liczymy sami (slopeAccel), a bez tego
+        // grawitacja byłaby policzona dwa razy (pod górę rower tracił prędkość, a stojący zsuwał się po stoku).
+        rb.useGravity = !grounded;
+        Vector3 dir = grounded ? groundTangent : forward;
+        Vector3 v = dir * speed;
+        if (grounded) v -= groundNormal * 0.3f;     // lekki docisk do podłoża, żeby nie odbijać się na nierównościach
+        else v.y = rb.linearVelocity.y;
         rb.linearVelocity = v;
-        lastForward = forward;
+        lastForward = dir;
     }
 
     void Fall(FallKind kind, float side, string description, float atSpeed)
@@ -432,7 +514,10 @@ public class BikeController : MonoBehaviour
         fallAmount = Mathf.Max(pitchAmt, rollAmt);
 
         float maxPitch = Mathf.Lerp(frontStandMinPitch, frontStandPitch, fallSeverity);
-        float pitch = fallKind == FallKind.Slip ? 0f : maxPitch * pitchAmt;
+        // Pochylenie roweru na stoku (łagodzone, żeby kamera nie "pływała"): pod górę patrzymy w górę.
+        float slopeTarget = grounded && !fallen ? -Mathf.Asin(Mathf.Clamp(groundTangent.y, -1f, 1f)) * Mathf.Rad2Deg * 0.6f : 0f;
+        slopePitch = Mathf.Lerp(slopePitch, slopeTarget, 1f - Mathf.Exp(-4f * dt));
+        float pitch = (fallKind == FallKind.Slip ? 0f : maxPitch * pitchAmt) + slopePitch;
         float tilt = Mathf.Lerp(lean, fallSide * fallRoll, rollAmt);
 
         // Dodatni lean = w prawo = ujemny obrót wokół osi Z (układ lewoskrętny Unity).
@@ -444,7 +529,7 @@ public class BikeController : MonoBehaviour
             leanPivot.localRotation = q;
 
             // Przy staniu na przednim kole obrót odbywa się wokół przedniej opony (nie środka roweru).
-            if (fallKind != FallKind.Slip)
+            if (fallKind != FallKind.Slip && fallKind != FallKind.None && fallAmount > 0f)
             {
                 var pivotPoint = new Vector3(0f, 0f, frontContactZ);
                 leanPivot.localPosition = pivotPoint - q * pivotPoint;
