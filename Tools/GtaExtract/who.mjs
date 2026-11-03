@@ -4,7 +4,7 @@ const g = openGame(gameDir);
 const ide = loadIde(g), ipl = loadIpl(g, ide), col = loadColBounds(g);
 const rows = [];
 for (const o of ipl) {
-  if (o.interior !== 0 || /^lod/i.test(o.model)) continue;
+  if (!o.exterior || /^lod/i.test(o.model)) continue;
   if (Math.hypot(o.x - cx, o.y - cy) > rad) continue;
   const c = col.get(o.model.toLowerCase());
   let info = 'nocol';

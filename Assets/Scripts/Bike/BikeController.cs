@@ -44,7 +44,7 @@ public class BikeController : MonoBehaviour
 
     [Header("Teren")]
     [Tooltip("Jak mocno nachylenie terenu hamuje (pod górę) i napędza (z góry) rower: 1 = prawdziwa grawitacja.")]
-    [SerializeField, Range(0f, 1.5f)] float slopeInfluence = 0.5f;
+    [SerializeField, Range(0f, 1.5f)] float slopeInfluence = 0.35f;
     [Tooltip("Ile (m/s^2) stoku potrafi utrzymać stojący rowerzysta nogami; bardziej stromy stok zaczyna zsuwać rower w tył. Hamulec dodaje swoje.")]
     [SerializeField] float standstillHold = 1.2f;
     [Tooltip("Jak daleko przed rowerem (m) sprawdzamy teren, by wjechać na próg zgodnie z jego nachyleniem.")]

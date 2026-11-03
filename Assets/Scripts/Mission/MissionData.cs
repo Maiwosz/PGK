@@ -39,6 +39,37 @@ public class TerrainMeta
     public float zMin, zMax;
 }
 
+/// <summary>Model z siatką kolizji GTA: wierzchołki (float x,y,z) i indeksy (ushort) w meshes.bin.</summary>
+[Serializable]
+public class MeshModel
+{
+    public string n;
+    public int vo, nv;          // przesunięcie (bajty) i liczba wierzchołków
+    public int io, nt;          // przesunięcie (bajty) i liczba trójkątów (indeksy po 3 ushort)
+    public int[] sub;           // tylko grunt: liczba trójkątów w klasach powierzchni 0..5 (trójkąty posortowane wg klasy)
+}
+
+[Serializable]
+public class MeshModelList
+{
+    public MeshModel[] models;
+}
+
+/// <summary>Instancja modelu: m = indeks modelu, g = grupa (0 obiekty, 1 roślinność, 2 tory), c = kategoria.</summary>
+[Serializable]
+public class MeshInstance
+{
+    public int m, g, c;
+    public float[] p;           // położenie początku modelu (Unity)
+    public float[] q;           // kwaternion Unity (x, y, z, w)
+}
+
+[Serializable]
+public class MeshInstanceList
+{
+    public MeshInstance[] instances;
+}
+
 [Serializable]
 public class PlantList
 {

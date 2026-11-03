@@ -8,7 +8,7 @@
 // Użycie: node build-recipe.mjs "<katalog GTA SA>" "<katalog wyjściowy>"
 import fs from 'node:fs';
 import path from 'node:path';
-import { openGame, loadIde, loadIpl, loadColBounds, readColMesh } from './gta.mjs';
+import { openGame, loadIde, loadIpl, loadColBounds, readColMesh, readColFull } from './gta.mjs';
 
 const gameDir = process.argv[2];
 const outDir = process.argv[3];
@@ -23,6 +23,7 @@ const TILE = 1024;            // komórek na kafelek terenu (Unity: heightmapRes
 const MIN_X = 1400, MIN_Y = -2300;
 const SAMPLES_X = TILE + 1, SAMPLES_Y = 2 * TILE + 1;
 const OBJECT_RADIUS = 220;    // m od toru
+const GROUND_RADIUS = +process.env.GROUND_RADIUS || 99999;    // m od toru: grunt GTA (drogi, chodniki, trawa...) trafia jako siatki w całym obszarze mapy; heightfield zostaje tylko tam, gdzie GTA nie ma gruntu (morze, dno)
 const SEA_FLOOR = -8;         // m – dno tam, gdzie nie ma danych o gruncie (morze)
 const CARVE_HALF = 7, CARVE_BLEND = 14;   // szerokość podłoża toru i strefa wygładzenia
 
@@ -172,7 +173,7 @@ function decompose(mesh, bbMin, bbMax, cell) {
 
 const objects = [];
 for (const o of ipl) {
-  if (o.interior !== 0) continue;
+  if (!o.exterior) continue;
   const c = col.get(o.model.toLowerCase());
   if (!c) continue;
   if (SKIP.test(o.model) && !/bridge|tunn/i.test(o.model)) continue;
@@ -226,7 +227,7 @@ const plants = [];
   let singles = 0, groups = 0;
   const dist = (x, y) => { let best = 1e18; for (let i = 0; i < route.length; i += 3) { const d = (route[i].x - x) ** 2 + (route[i].y - y) ** 2; if (d < best) best = d; } return Math.sqrt(best); };
   for (const o of ipl) {
-    if (o.interior !== 0 || NOT_VEG.test(o.model) || !VEG.test(o.model)) continue;
+    if (!o.exterior || NOT_VEG.test(o.model) || !VEG.test(o.model)) continue;
     const c = col.get(o.model.toLowerCase());
     if (!c) continue;
     const size = c.max.map((v, i) => v - c.min[i]);
@@ -318,7 +319,7 @@ console.log('punkty na moście', nb, '(', nb * 2, 'm ), w tunelu', nt, '(', nt *
 }
 
 // ------------------------------------------------------------------ teren
-const GROUND_NAME = /land|road|grnd|ground|terrain|hill|beach|cliff|rock|desert|dirt|grass|sand|bank|slope|ridge|valley|canyon|quarry|path|flat|floor|cstline|coast|shore|mount|field|edge/i;
+const GROUND_NAME = /land|road|roak|grnd|ground|terrain|hill|beach|cliff|rock|desert|dirt|grass|sand|bank|slope|ridge|valley|canyon|quarry|path|flat|floor|cstline|coast|shore|mount|field|edge/i;
 const EXCLUDE_TERRAIN = /bridge|brij|brid|viaduct|tunn|rail|trax|train|overpass|ramp|^lod|storm|drain|flyover|freeway|spag|pillar|fence|stadt|sign|pole|wire(?!stown)|tree|veg_|lamp|light|tower|crane/i;
 function surfClass(m) {
   if ([1, 2, 3, 4, 5, 7, 8, 34].includes(m)) return 1;       // asfalt / beton / chodnik
@@ -335,8 +336,9 @@ const cls = new Uint8Array(SAMPLES_X * SAMPLES_Y);
 const MAX_X = MIN_X + TILE * CELL, MAX_Y = MIN_Y + 2 * TILE * CELL;
 
 let used = 0;
+const terrainInst = new Set();     // instancje użyte jako teren (siatka wysokości) – nie powtarzamy ich jako siatek
 for (const o of ipl) {
-  if (o.interior !== 0) continue;
+  if (!o.exterior) continue;
   if (o.x < MIN_X - 300 || o.x > MAX_X + 300 || o.y < MIN_Y - 300 || o.y > MAX_Y + 300) continue;
   if (EXCLUDE_TERRAIN.test(o.model)) continue;
   const mm = getMesh(o.model);
@@ -349,6 +351,7 @@ for (const o of ipl) {
   }
   if (!isGround) continue;
   used++;
+  terrainInst.add(o);
   const q = qEff(o);
   const { verts, tris: T, mats } = mm.m;
   const wv = new Float32Array(verts.length);
@@ -442,31 +445,60 @@ for (let i = 0; i < height.length; i++) if (height[i] > -Infinity) hadData[i] = 
 }
 
 const origHeight = Float32Array.from(height);
+// Grunt przy torze leży na poziomie górnej powierzchni płyty mostu (0,5 m pod torem): podsypka (0,5 m) stoi na nim tak samo, jak na moście.
+const GROUND_BELOW = 0.53;       // grunt 3 cm pod górną powierzchnią płyty mostu (bez z-fightingu)
+const BRIDGE_END_BELOW = 0.65;   // początek/koniec mostu: teren chowa się 15 cm pod płytą
+// Końcówki mostów (po ~8 m z każdej strony) traktujemy jak zwykły grunt: teren dochodzi do poziomu toru,
+// więc na most da się wjechać, a przed nim nie ma dołka po przekopie pod płytą.
+const bridgeEnd = new Uint8Array(route.length);
+{
+  let i = 0;
+  while (i < route.length) {
+    if (kinds[i] !== 1) { i++; continue; }
+    let j = i; while (j + 1 < route.length && kinds[j + 1] === 1) j++;
+    const K = Math.min(4, Math.floor((j - i + 1) / 3));
+    for (let k = 0; k < K; k++) { bridgeEnd[i + k] = 1; bridgeEnd[j - k] = 1; }
+    i = j + 1;
+  }
+}
 // korytarz toru: wyrównanie podłoża do wysokości toru.
 //  • zwykły odcinek / tunel: podłoże dokładnie pod podsypką (nasyp albo wykop),
 //  • most: teren tylko obniżamy tak, by nie wystawał ponad spód płyty mostu (przekop przez wzgórze).
 {
   const R = CARVE_HALF + CARVE_BLEND;
   let carved = 0;
-  for (let i = 0; i < route.length; i++) {
+  // grunt: każda komórka dostaje poziom NAJBLIŻSZEGO punktu trasy (nie ostatniego przetworzonego)
+  const bestD = new Float32Array(height.length).fill(1e9), bestI = new Int32Array(height.length).fill(-1);
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < route.length; i++) {
     if (kinds[i] === 2) continue;      // tunel: teren nad nim zostaje (przywrócony niżej)
-    const bridge = kinds[i] === 1;
+    const bridge = kinds[i] === 1 && !bridgeEnd[i];
+    if ((pass === 0) !== bridge) continue;   // przebieg 0: przekop pod mostem, przebieg 1: grunt i końcówki mostów
     const p = route[i];
-    const target = bridge ? p.z - 1.8 : p.z - 0.4;
+    const target = bridge ? p.z - 1.8 : (kinds[i] === 1 ? p.z - BRIDGE_END_BELOW : p.z - GROUND_BELOW);
     const gx0 = Math.max(0, Math.floor((p.x - R - MIN_X) / CELL)), gx1 = Math.min(SAMPLES_X - 1, Math.ceil((p.x + R - MIN_X) / CELL));
     const gy0 = Math.max(0, Math.floor((p.y - R - MIN_Y) / CELL)), gy1 = Math.min(SAMPLES_Y - 1, Math.ceil((p.y + R - MIN_Y) / CELL));
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
       const d = Math.hypot(MIN_X + gx * CELL - p.x, MIN_Y + gy * CELL - p.y);
       if (d > R) continue;
       const idx = gy * SAMPLES_X + gx;
-      let w;
-      if (d <= CARVE_HALF) w = 1; else { const t = (d - CARVE_HALF) / CARVE_BLEND; w = 1 - t * t * (3 - 2 * t); }
-      const nh = height[idx] * (1 - w) + target * w;
       if (bridge) {
+        let w;
+        if (d <= CARVE_HALF) w = 1; else { const t = (d - CARVE_HALF) / CARVE_BLEND; w = 1 - t * t * (3 - 2 * t); }
+        const nh = height[idx] * (1 - w) + target * w;
         if (nh < height[idx]) { height[idx] = nh; carved++; }       // most: tylko obniżamy
-      } else if (Math.abs(nh - target) < Math.abs(height[idx] - target)) { height[idx] = nh; carved++; }
-      if (d <= CARVE_HALF && !bridge) cls[idx] = 3;
+      } else if (d < bestD[idx]) { bestD[idx] = d; bestI[idx] = i; }
     }
+  }
+  {
+      for (let idx = 0; idx < height.length; idx++) {
+        if (bestI[idx] < 0) continue;
+        const d = bestD[idx], bi = bestI[idx], target = route[bi].z - (kinds[bi] === 1 ? BRIDGE_END_BELOW : GROUND_BELOW);
+        let w;
+        if (d <= CARVE_HALF) w = 1; else { const t = (d - CARVE_HALF) / CARVE_BLEND; w = 1 - t * t * (3 - 2 * t); }
+        const nh = height[idx] * (1 - w) + target * w;
+        if (Math.abs(nh - target) < Math.abs(height[idx] - target)) { height[idx] = nh; carved++; }
+        if (d <= CARVE_HALF) cls[idx] = 3;
+      }
   }
   // Nad tunelem teren wraca do oryginalnej wysokości (wzgórze), a portal powstaje na granicy wykopu i tunelu.
   {
@@ -496,8 +528,9 @@ const origHeight = Float32Array.from(height);
   let clamped = 0;
   for (let i = 0; i < route.length; i++) {
     if (kinds[i] === 2) continue;
+    if (!(kinds[i] === 1 && !bridgeEnd[i])) continue;   // grunt jest już wyrównany do najbliższego punktu trasy
     const p = route[i];
-    const ceil = kinds[i] === 1 ? p.z - 1.8 : p.z - 0.4;
+    const ceil = kinds[i] === 1 && !bridgeEnd[i] ? p.z - 1.8 : p.z - GROUND_BELOW;
     const gx0 = Math.max(0, Math.floor((p.x - 5 - MIN_X) / CELL)), gx1 = Math.min(SAMPLES_X - 1, Math.ceil((p.x + 5 - MIN_X) / CELL));
     const gy0 = Math.max(0, Math.floor((p.y - 5 - MIN_Y) / CELL)), gy1 = Math.min(SAMPLES_Y - 1, Math.ceil((p.y + 5 - MIN_Y) / CELL));
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
@@ -505,6 +538,40 @@ const origHeight = Float32Array.from(height);
       const idx = gy * SAMPLES_X + gx;
       if (height[idx] > ceil) { height[idx] = ceil; clamped++; }
     }
+  }
+  // tunnel-cover: nad obudową tunelu teren zawsze sięga ponad jej dach (heightfield nie ma „wnętrza”, więc
+  // inaczej zbocze wchodziłoby do środka). Pas ±COVER_HALF jest podniesiony do toru + COVER_H, dalej wygaszany.
+  {
+    const COVER_HALF = 6.5, COVER_BLEND = 7, COVER_H = 9.5, RR = COVER_HALF + COVER_BLEND;
+    let raised = 0;
+    const seen = new Set();
+    for (let i = 0; i < route.length; i++) {
+      if (kinds[i] !== 2) continue;
+      const p = route[i];
+      const gx0 = Math.max(0, Math.floor((p.x - RR - MIN_X) / CELL)), gx1 = Math.min(SAMPLES_X - 1, Math.ceil((p.x + RR - MIN_X) / CELL));
+      const gy0 = Math.max(0, Math.floor((p.y - RR - MIN_Y) / CELL)), gy1 = Math.min(SAMPLES_Y - 1, Math.ceil((p.y + RR - MIN_Y) / CELL));
+      for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+        const idx = gy * SAMPLES_X + gx;
+        if (seen.has(idx)) continue;
+        const wx = MIN_X + gx * CELL, wy = MIN_Y + gy * CELL;
+        let best = 1e18, bi = i;
+        for (let j = Math.max(0, i - 40); j <= Math.min(route.length - 1, i + 40); j++) {
+          const d = (route[j].x - wx) ** 2 + (route[j].y - wy) ** 2;
+          if (d < best) { best = d; bi = j; }
+        }
+        if (kinds[bi] !== 2) continue;
+        const d = Math.sqrt(best);
+        if (d > RR) continue;
+        seen.add(idx);
+        const top = route[bi].z + COVER_H;
+        let w = 1;
+        if (d > COVER_HALF) { const t = (d - COVER_HALF) / COVER_BLEND; w = 1 - t * t * (3 - 2 * t); }
+        const nh = height[idx] * (1 - w) + Math.max(height[idx], top) * w;
+        if (nh > height[idx] + 0.01) { height[idx] = nh; raised++; }
+        if (d <= COVER_HALF) cls[idx] = 3;
+      }
+    }
+    console.log('nasyp nad tunelem:', raised, 'wierzchołków');
   }
   console.log('wyrównano komórek wzdłuż toru', carved, ', dociśnięto do sufitu', clamped);
 }
@@ -516,8 +583,163 @@ const h16 = new Uint16Array(height.length);
 for (let i = 0; i < height.length; i++) h16[i] = Math.max(0, Math.min(65535, Math.round((height[i] - zmin) / (zmax - zmin) * 65535)));
 console.log('wysokości terenu: min', zmin, 'max', zmax);
 
+// ------------------------------------------------------------------ siatki kolizji GTA (wersja "gta")
+// Bez filtrowania po nazwach: każdy obiekt z kolizją w zasięgu trafia do jednej z grup:
+//   g=0 obiekty (budynki, ogrodzenia, rekwizyty, mosty/tunele poza trasą), g=1 roślinność, g=2 tory (szyny GTA + mosty/tunele na trasie).
+// Teren (instancje użyte w siatce wysokości) pomijamy. Bryły, których trójkąty zajmują skrajnię toru, usuwamy (grupa 0).
+// Wynik: meshes.bin (na model: wierzchołki float32 w układzie Unity-lokalnym, potem indeksy uint16 z odwróconą orientacją),
+// meshes.json (tabela modeli), mesh_instances.json (instancje: model, grupa, kategoria, położenie początku modelu, kwaternion).
+const orientStat = { flipped: 0, total: 0 };
+const meshModels = [], meshModelIdx = new Map(), meshChunks = [];
+let meshBytes = 0;
+const meshInstances = [];
+const CATS = { building: 0, fence: 1, station: 2, bridge: 3, tunnel: 4, rail: 5, veg: 6, ground: 7 };
+const gcov = new Uint8Array(SAMPLES_X * SAMPLES_Y);     // próbki siatki wysokości pokryte siatkami gruntu GTA
+// tol == null: pokrycie bezwarunkowe (grunt GTA); w przeciwnym razie tylko płaskie powierzchnie nie wyżej niż tol nad terenem i nie niżej niż tolDown pod nim
+// (działki, płyty, parkingi, kanały burzowe, nieckę parku): albo walczą z heightfieldem o głębię, albo teren je zasłania, więc w tych komórkach teren wycinamy.
+function rasterCover(full, o, tol = null, tolDown = tol) {
+  const q = qEff(o), V = full.verts, T = full.tris, w = new Float32Array(V.length);
+  for (let i = 0; i < V.length; i += 3) { const r = rotv(q, V[i], V[i + 1], V[i + 2]); w[i] = r[0] + o.x; w[i + 1] = r[1] + o.y; w[i + 2] = r[2] + o.z; }
+  for (let t = 0; t < T.length; t += 3) {
+    const a = T[t] * 3, b = T[t + 1] * 3, c = T[t + 2] * 3;
+    const ax = w[a], ay = w[a + 1], bx = w[b], by = w[b + 1], cx = w[c], cy = w[c + 1];
+    const az = w[a + 2], bz = w[b + 2], cz = w[c + 2];
+    const det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+    if (Math.abs(det) < 1e-6) continue;
+    const x0 = Math.max(0, Math.ceil((Math.min(ax, bx, cx) - MIN_X) / CELL)), x1 = Math.min(SAMPLES_X - 1, Math.floor((Math.max(ax, bx, cx) - MIN_X) / CELL));
+    const y0 = Math.max(0, Math.ceil((Math.min(ay, by, cy) - MIN_Y) / CELL)), y1 = Math.min(SAMPLES_Y - 1, Math.floor((Math.max(ay, by, cy) - MIN_Y) / CELL));
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
+      const px = MIN_X + gx * CELL, py = MIN_Y + gy * CELL;
+      const l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / det, l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / det, l3 = 1 - l1 - l2;
+      if (l1 >= -1e-4 && l2 >= -1e-4 && l3 >= -1e-4) {
+        if (tol !== null) { const dz = l1 * az + l2 * bz + l3 * cz - height[gy * SAMPLES_X + gx]; if (dz > tol || dz < -tolDown) continue; }
+        gcov[gy * SAMPLES_X + gx] = 1;
+      }
+    }
+  }
+}
+{
+  const VEGN = /^sm_|vbg_|veg|palm|bush|tree|cedar|elm|oak|pine|fir|redwood|cypress|scrub|shrub|hedge|plant|copse|bevhil|fern|cactus|cact|agave|joshua|sapling|cottonwood/i;
+  // wyjątki: nazwy zawierające fragment drzewa, ale będące czymś innym (Las Vegas: vegas*/vegen*/vegn*, remiza, drogi 'roak', skrzynie na rośliny...)
+  const NOT_VEGN = /petrol|lamp|sign|pump|light|pole|^lod|bench|bin|fence|stand|^veg(as|en|n|ash)|vegast|hse|house|road|roak|fire(house|hse|esc|scape)|chem|plantbox|plantbed|apgate|wall|motel|ferns?d/i;
+  const RAILN = /trax|trk|trntrk|railroad|(?<!t)rail(?!br|way)|trainstuff|^traintrack/i;
+  const rgrid = new Map();
+  const gk = (x, y) => Math.floor(x / 4) + ',' + Math.floor(y / 4);
+  for (let i = 0; i < route.length; i++) { const k = gk(route[i].x, route[i].y); if (!rgrid.has(k)) rgrid.set(k, []); rgrid.get(k).push(i); }
+  const fullCache = new Map();
+  const getFull = name => {
+    if (fullCache.has(name)) return fullCache.get(name);
+    const c = col.get(name.toLowerCase());
+    const r = c ? readColFull(g, c) : null;
+    fullCache.set(name, r);
+    return r;
+  };
+  const blocks = (full, o) => {
+    const q = qEff(o), V = full.verts, T = full.tris, w = new Float32Array(V.length);
+    for (let i = 0; i < V.length; i += 3) { const r = rotv(q, V[i], V[i + 1], V[i + 2]); w[i] = r[0] + o.x; w[i + 1] = r[1] + o.y; w[i + 2] = r[2] + o.z; }
+    const hit = (px, py, pz) => {
+      const cx = Math.floor(px / 4), cy = Math.floor(py / 4);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const L = rgrid.get((cx + dx) + ',' + (cy + dy)); if (!L) continue;
+        for (const i of L) { const rp = route[i]; if (Math.hypot(px - rp.x, py - rp.y) <= 2.6 && pz >= rp.z + 0.4 && pz <= rp.z + 4.5) return true; }
+      }
+      return false;
+    };
+    for (let t = 0; t < T.length; t += 3) {
+      const a = T[t] * 3, b = T[t + 1] * 3, c = T[t + 2] * 3;
+      const e = Math.max(Math.hypot(w[b] - w[a], w[b + 1] - w[a + 1]), Math.hypot(w[c] - w[a], w[c + 1] - w[a + 1]), Math.hypot(w[c] - w[b], w[c + 1] - w[b + 1]));
+      const n = Math.min(25, Math.max(1, Math.ceil(e)));
+      for (let i = 0; i <= n; i++) for (let j = 0; j <= n - i; j++) {
+        const u = i / n, v = j / n, k = 1 - u - v;
+        if (hit(k * w[a] + u * w[b] + v * w[c], k * w[a + 1] + u * w[b + 1] + v * w[c + 1], k * w[a + 2] + u * w[b + 2] + v * w[c + 2])) return true;
+      }
+    }
+    return false;
+  };
+  const addModel = (name, full, ground) => {
+    if (meshModelIdx.has(name)) return meshModelIdx.get(name);
+    let sub = null;
+    if (ground) {   // trójkąty posortowane wg klasy powierzchni (asfalt, trawa, ziemia, piasek, skała, inne) -> podsiatki
+      const nt0 = full.tris.length / 3, order = [], counts = [0, 0, 0, 0, 0, 0, 0];
+      const gcl = m => ([4, 5, 7, 34].includes(m) ? 6 : surfClass(m));   // chodnik / beton jako osobna klasa 6
+      for (let k = 0; k < 7; k++) for (let t = 0; t < nt0; t++) if (gcl(full.mats[t]) === k) { order.push(t); counts[k]++; }
+      const nt1 = new Uint16Array(nt0 * 3);
+      order.forEach((t, i) => { nt1[i * 3] = full.tris[t * 3]; nt1[i * 3 + 1] = full.tris[t * 3 + 1]; nt1[i * 3 + 2] = full.tris[t * 3 + 2]; });
+      full = { verts: full.verts, tris: nt1, mats: full.mats }; sub = counts;
+    }
+    {   // trójkąty prawie poziome ustawiamy normalną do góry: kolizja trafia w przednią stronę, a w GTA nawinięcie bywa dowolne
+      const V = full.verts, T = full.tris; let flipped = 0;
+      for (let i = 0; i < T.length; i += 3) {
+        const a = T[i] * 3, b = T[i + 1] * 3, c = T[i + 2] * 3;
+        const ux = V[b] - V[a], uy = V[b + 1] - V[a + 1], uz = V[b + 2] - V[a + 2], vx = V[c] - V[a], vy = V[c + 1] - V[a + 1], vz = V[c + 2] - V[a + 2];
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, len = Math.hypot(nx, ny, nz);
+        if (len > 1e-9 && Math.abs(nz) / len > 0.7 && nz < 0) { const t1 = T[i + 1]; T[i + 1] = T[i + 2]; T[i + 2] = t1; flipped++; }
+      }
+      orientStat.flipped += flipped; orientStat.total += T.length / 3;
+    }
+    const nv = full.verts.length / 3, nt = full.tris.length / 3;
+    const vb = Buffer.alloc(nv * 12), ib = Buffer.alloc(nt * 6 + (nt * 6) % 4);
+    for (let i = 0; i < nv; i++) { vb.writeFloatLE(full.verts[i * 3], i * 12); vb.writeFloatLE(full.verts[i * 3 + 2], i * 12 + 4); vb.writeFloatLE(full.verts[i * 3 + 1], i * 12 + 8); }   // GTA (x,y,z) -> Unity (x,z,y)
+    for (let i = 0; i < nt; i++) { ib.writeUInt16LE(full.tris[i * 3], i * 6); ib.writeUInt16LE(full.tris[i * 3 + 2], i * 6 + 2); ib.writeUInt16LE(full.tris[i * 3 + 1], i * 6 + 4); }   // zamiana a,c,b: układ lewoskrętny
+    const entry = { n: name, vo: meshBytes, nv, io: meshBytes + vb.length, nt };
+    if (sub) entry.sub = sub;
+    meshChunks.push(vb, ib); meshBytes += vb.length + ib.length;
+    meshModels.push(entry); meshModelIdx.set(name, meshModels.length - 1);
+    return meshModels.length - 1;
+  };
+  const stat = { skipped: { terrain: 0, nomesh: 0, blocked: 0, lod: 0 }, groups: [0, 0, 0, 0] };
+  for (const o of ipl) {
+    if (!o.exterior) continue;
+    const c = col.get(o.model.toLowerCase());
+    if (!c) continue;
+    if (/^lod/i.test(o.model)) { stat.skipped.lod++; continue; }
+    const isGroundInst = terrainInst.has(o);
+    const isVeg = VEGN.test(o.model) && !NOT_VEGN.test(o.model);
+    const size = c.max.map((v, i) => v - c.min[i]);
+    const center = c.max.map((v, i) => (v + c.min[i]) / 2);
+    const rr = rotv(qEff(o), center[0], center[1], center[2]);
+    const reach = Math.hypot(size[0], size[1]) / 2;
+    const dd = distToRoute(o.x + rr[0], o.y + rr[1]);
+    if (isGroundInst) { if (dd.d - reach > GROUND_RADIUS) { stat.skipped.terrain++; continue; } }
+    else if (dd.d - reach > (isVeg ? 300 : OBJECT_RADIUS)) continue;
+
+    let grp, cat;
+    if (isGroundInst) { grp = 3; cat = 'ground'; }
+    else if (RAILN.test(o.model)) { grp = 2; cat = 'rail'; }
+    else if (/bridge|brij|brid|viaduct|railbr|archbr|cunterb|fredbar/i.test(o.model) || /tunn/i.test(o.model)) {
+      cat = /tunn/i.test(o.model) ? 'tunnel' : 'bridge';
+      grp = (dd.d <= 6 && kinds[dd.i] !== 0) ? 2 : 0;       // most/tunel, po którym jedzie tor -> wersja "tory"
+    }
+    else if (isVeg) continue;       // roślinność: zostają nasze procedurale (kolizje drzew w grze to tylko pnie-pudła)
+    else {
+      grp = 0;
+      cat = /fence|fnce/i.test(o.model) ? 'fence' : (/stat|platform/i.test(o.model) && /train|rail|trn/i.test(o.model)) ? 'station' : 'building';
+    }
+    const full = getFull(o.model);
+    if (!full) { stat.skipped.nomesh++; continue; }
+    if (grp === 3) rasterCover(full, o);
+    else if (grp !== 1) rasterCover(full, o, 1.5, cat === 'tunnel' ? 1.5 : 15);
+    if (grp === 0 && dd.d - reach <= 3 && blocks(full, o)) { stat.skipped.blocked++; continue; }
+    meshInstances.push({ m: addModel(o.model, full, grp === 3), g: grp, c: CATS[cat], p: [+o.x.toFixed(2), +o.z.toFixed(2), +o.y.toFixed(2)], q: [+o.qx.toFixed(5), +o.qz.toFixed(5), +o.qy.toFixed(5), +o.qw.toFixed(5)] });
+    stat.groups[grp]++;
+  }
+  console.log('siatki GTA: instancji', meshInstances.length, '(obiekty', stat.groups[0], ', roślinność', stat.groups[1], ', tory', stat.groups[2] + ', grunt', stat.groups[3] + '), modeli', meshModels.length,
+    ', pominięto:', JSON.stringify(stat.skipped));
+  console.log('odwrócono trójkątów poziomych ku górze:', orientStat.flipped, 'z', orientStat.total);
+}
+
 // ------------------------------------------------------------------ zapis
 const f = n => path.join(outDir, n);
+{   // maska dziur terenu: komórka (cztery rogi pokryte siatkami gruntu GTA) – zamiast heightfieldu jest siatka. Bit na komórkę, wiersz globalny gy*TILE+x.
+  const bits = Buffer.alloc((2 * TILE * TILE) / 8);
+  let holes = 0;
+  for (let gy = 0; gy < 2 * TILE; gy++) for (let gx = 0; gx < TILE; gx++) {
+    const k = gy * SAMPLES_X + gx;
+    if (gcov[k] && gcov[k + 1] && gcov[k + SAMPLES_X] && gcov[k + SAMPLES_X + 1]) { const i = gy * TILE + gx; bits[i >> 3] |= 1 << (i & 7); holes++; }
+  }
+  fs.writeFileSync(f('ground_holes.bin'), bits);
+  console.log('maska gruntu GTA: komórek', holes, '(' + (holes * CELL * CELL / 1e6).toFixed(2) + ' km²)');
+}
 fs.writeFileSync(f('terrain.bin'), Buffer.from(h16.buffer));
 fs.writeFileSync(f('terrain_class.bin'), Buffer.from(cls.buffer));
 fs.writeFileSync(f('terrain.json'), JSON.stringify({
@@ -532,4 +754,7 @@ fs.writeFileSync(f('route.json'), JSON.stringify({
 }));
 fs.writeFileSync(f('objects.json'), JSON.stringify({ objects }));
 fs.writeFileSync(f('plants.json'), JSON.stringify({ d: plants.flat() }));
-for (const n of ['terrain.bin', 'terrain_class.bin', 'route.json', 'objects.json', 'plants.json']) console.log(n, (fs.statSync(f(n)).size / 1024).toFixed(0) + ' KB');
+fs.writeFileSync(f('meshes.bin'), Buffer.concat(meshChunks));
+fs.writeFileSync(f('meshes.json'), JSON.stringify({ models: meshModels }));
+fs.writeFileSync(f('mesh_instances.json'), JSON.stringify({ instances: meshInstances }));
+for (const n of ['terrain.bin', 'terrain_class.bin', 'route.json', 'objects.json', 'plants.json', 'meshes.bin', 'meshes.json', 'mesh_instances.json', 'ground_holes.bin']) console.log(n, (fs.statSync(f(n)).size / 1024).toFixed(0) + ' KB');

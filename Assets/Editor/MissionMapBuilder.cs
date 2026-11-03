@@ -47,7 +47,7 @@ public static class MissionMapBuilder
         GameObject deck = CreateBridgePrefab(mats);
         GameObject tunnel = CreateTunnelPrefab(mats);
         Terrain[] terrains = null;
-        TerrainData[] terrainData = CreateTerrainData(meta);
+        TerrainData[] terrainData = CreateTerrainData(meta, route);
 
         Scene scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         foreach (var cam in Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
@@ -80,9 +80,7 @@ public static class MissionMapBuilder
         var gen = trackGo.AddComponent<RailTrackGenerator>();
         SetRef(gen, "path", path);
         SetRef(gen, "railPrefab", rail);
-        SetRef(gen, "bridgePrefab", deck);
-        SetRef(gen, "tunnelPrefab", tunnel);
-        gen.Generate();
+        // Most i tunel pochodzą teraz z kolizji GTA (grupa "tory"); nasz generator układa tylko szyny jako wizualizację.
 
         // Obiekty jako bryły.
         BuildObjects(objs, mats, terrains);
@@ -90,13 +88,19 @@ public static class MissionMapBuilder
         // Drzewa i krzaki (niskopoligonowe).
         MissionVegetation.Build(meta, terrains);
 
+        // Siatki kolizji GTA: obiekty (przełącznik F5 z naszymi pudełkami) i tory/mosty/tunele (kolizja jazdy). Roślinność zostaje nasza.
+        var gtaTracks = BuildGtaVariants(mats, trackGo, terrains, meta);
+
+        // Nasze szyny to tylko wizualizacja: ścieżkę dopasowujemy do powierzchni kolizji (GTA albo teren), potem z niej układamy tor.
+        SnapPathToCollision(path, gtaTracks, deck, CreateSupportFloorPrefab(mats));
+        gen.Generate();
+
         // Pociąg.
         CreateTrain(path, mats);
 
-        // Łuki i filary długich mostów (Frederick Bridge).
-        BuildBridgeArches(path, mats);
-
         // Rower na starcie, obok toru.
+        // Prefab roweru bywa trzymany w pamięci edytora ze starymi wartościami pól (np. po zmianie domyślnych w kodzie).
+        AssetDatabase.ImportAsset(BikePrefabPath, ImportAssetOptions.ForceUpdate);
         var bikePrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BikePrefabPath);
         if (bikePrefab == null)
         {
@@ -127,6 +131,11 @@ public static class MissionMapBuilder
         EditorBuildSettings.scenes = list.ToArray();
 
         AssetDatabase.SaveAssets();
+        // Po wielokrotnym nadpisywaniu meshy i prefabów edytor potrafi trzymać w pamięci stare, puste referencje
+        // (tory bez meshy). Wymuszamy reimport wygenerowanych assetów i wczytujemy scenę z dysku.
+        AssetDatabase.ImportAsset(GenDir + "/Meshes", ImportAssetOptions.ForceUpdate | ImportAssetOptions.ImportRecursive);
+        AssetDatabase.ImportAsset(GenDir + "/Prefabs", ImportAssetOptions.ForceUpdate | ImportAssetOptions.ImportRecursive);
+        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
         Debug.Log($"[MissionMapBuilder] Gotowe: {ScenePath} (tor {route.lengthM / 1000f:0.00} km, obiektów {objs.objects.Length})");
     }
 
@@ -188,7 +197,9 @@ public static class MissionMapBuilder
     struct BoxDef
     {
         public Vector3 Center, Size;
-        public BoxDef(Vector3 c, Vector3 s) { Center = c; Size = s; }
+        public Quaternion Rot;
+        public BoxDef(Vector3 c, Vector3 s) { Center = c; Size = s; Rot = Quaternion.identity; }
+        public BoxDef(Vector3 c, Vector3 s, Quaternion r) { Center = c; Size = s; Rot = r; }
     }
 
     /// <summary>Skleja listę pudełek w jedną siatkę (jeden podmesh).</summary>
@@ -199,7 +210,7 @@ public static class MissionMapBuilder
         for (int i = 0; i < boxes.Count; i++)
         {
             combine[i].mesh = cube;
-            combine[i].transform = Matrix4x4.TRS(boxes[i].Center, Quaternion.identity, boxes[i].Size);
+            combine[i].transform = Matrix4x4.TRS(boxes[i].Center, boxes[i].Rot, boxes[i].Size);
         }
         var mesh = new Mesh();
         mesh.CombineMeshes(combine, true, true);
@@ -239,10 +250,11 @@ public static class MissionMapBuilder
         c.size = size;
     }
 
-    /// <summary>Odcinek toru (4 m wzdłuż Z, górna krawędź podsypki na y = 0): podsypka, 7 podkładów, 2 szyny.</summary>
+    /// <summary>Odcinek toru (4 m wzdłuż Z, górna krawędź podsypki na y = 0), tylko wizualny: niska podsypka, 7 podkładów, 2 szyny.</summary>
     static GameObject CreateRailPrefab(Mats m)
     {
-        var ballast = new List<BoxDef> { new BoxDef(new Vector3(0f, -0.25f, 0f), new Vector3(3.6f, 0.5f, SegmentLength)) };
+        // Tor jest tylko wizualizacją (jeździ się po kolizji GTA albo po terenie): niska podsypka, której górna krawędź to y = 0.
+        var ballast = new List<BoxDef> { new BoxDef(new Vector3(0f, -0.1f, 0f), new Vector3(3.2f, 0.2f, SegmentLength)) };
         var sleepers = new List<BoxDef>();
         for (int i = 0; i < 7; i++)
         {
@@ -259,8 +271,7 @@ public static class MissionMapBuilder
         var go = new GameObject("RailSegment");
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
         go.AddComponent<MeshRenderer>().sharedMaterials = new[] { m.Ballast, m.Sleeper, m.Steel };
-        // Tylko podsypka ma kolizję – szyn nie traktujemy jako przeszkody.
-        AddBoxCollider(go, new Vector3(0f, -0.25f, 0f), new Vector3(3.6f, 0.5f, SegmentLength));
+        // Bez colliderów – tor jest wyłącznie wizualizacją.
         return SavePrefab(go, "RailSegment");
     }
 
@@ -281,7 +292,7 @@ public static class MissionMapBuilder
         return SavePrefab(go, "BridgeDeck");
     }
 
-    /// <summary>Obudowa tunelu: dwie ściany i strop.</summary>
+    /// <summary>Obudowa tunelu: dwie ściany, strop i podłoga.</summary>
     static GameObject CreateTunnelPrefab(Mats m)
     {
         var parts = new List<BoxDef>
@@ -289,6 +300,7 @@ public static class MissionMapBuilder
             new BoxDef(new Vector3(-4.0f, 3.15f, 0f), new Vector3(0.8f, 7.3f, SegmentLength)),
             new BoxDef(new Vector3(4.0f, 3.15f, 0f), new Vector3(0.8f, 7.3f, SegmentLength)),
             new BoxDef(new Vector3(0f, 6.4f, 0f), new Vector3(8.8f, 0.8f, SegmentLength)),
+            new BoxDef(new Vector3(0f, -0.75f, 0f), new Vector3(7.6f, 0.5f, SegmentLength)),   // podłoga (górna powierzchnia na poziomie płyty mostu)
         };
         var mesh = CombineGroups("TunnelSegment", parts);
         var go = new GameObject("TunnelSegment");
@@ -300,7 +312,7 @@ public static class MissionMapBuilder
 
     // ---------------------------------------------------------------- teren
 
-    static TerrainData[] CreateTerrainData(TerrainMeta meta)
+    static TerrainData[] CreateTerrainData(TerrainMeta meta, RouteData route)
     {
         byte[] hb = File.ReadAllBytes(RecipeDir + "/terrain.bin");
         byte[] cb = File.ReadAllBytes(RecipeDir + "/terrain_class.bin");
@@ -328,6 +340,7 @@ public static class MissionMapBuilder
                     h[y, x] = System.BitConverter.ToUInt16(hb, (row + x) * 2) / 65535f;
             }
             td.SetHeights(0, 0, h);
+            TunnelHoles(td, meta, route, t, h);
 
             var a = new float[tile, tile, ClassNames.Length];
             for (int y = 0; y < tile; y++)
@@ -344,6 +357,49 @@ public static class MissionMapBuilder
             result[t] = td;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Heightfield nie ma „wnętrza”: przy wejściu do tunelu nasyp nad obudową zaczyna się stromym uskokiem, który
+    /// przecinałby otwór portalu. Komórki z takim uskokiem tuż przy końcach tunelu zamieniamy na dziury (przykrywa je ściana portalu).
+    /// </summary>
+    static void TunnelHoles(TerrainData td, TerrainMeta meta, RouteData route, int t, float[,] h)
+    {
+        int tile = meta.tile;
+        int n = route.pts.Length / 3;
+        var near = new List<Vector2>();
+        for (int i = 0; i < n; i++)
+        {
+            if (route.kinds[i] != 2) continue;
+            bool end = i == 0 || i == n - 1 || route.kinds[i - 1] != 2 || route.kinds[i + 1] != 2;
+            if (!end) continue;
+            // punkty trasy w okolicy końca tunelu (±24 m)
+            for (int j = Mathf.Max(0, i - 12); j <= Mathf.Min(n - 1, i + 12); j++)
+                near.Add(new Vector2(route.pts[j * 3], route.pts[j * 3 + 2]));
+        }
+        if (near.Count == 0) return;
+
+        int res = td.holesResolution;
+        var holes = new bool[res, res];
+        for (int y = 0; y < res; y++) for (int x = 0; x < res; x++) holes[y, x] = true;
+        float height = meta.zMax - meta.zMin;
+        int count = 0;
+        for (int y = 0; y < tile; y++)
+            for (int x = 0; x < tile; x++)
+            {
+                float a = h[y, x], b = h[y, x + 1], c = h[y + 1, x], d = h[y + 1, x + 1];
+                float range = (Mathf.Max(Mathf.Max(a, b), Mathf.Max(c, d)) - Mathf.Min(Mathf.Min(a, b), Mathf.Min(c, d))) * height;
+                if (range < 2.5f) continue;
+                var center = new Vector2(meta.minX + (x + 0.5f) * meta.cell, meta.minY + (t * tile + y + 0.5f) * meta.cell);
+                bool close = false;
+                foreach (var p in near) if ((p - center).sqrMagnitude < 5.5f * 5.5f) { close = true; break; }
+                if (!close) continue;
+                int hy = y * res / tile, hx = x * res / tile;
+                holes[hy, hx] = false;
+                count++;
+            }
+        td.SetHoles(0, 0, holes);
+        Debug.Log($"[MissionMapBuilder] TunnelHoles tile {t}: {count} dziur (holesResolution {res})");
     }
 
     static TerrainLayer[] CreateTerrainLayers()
@@ -491,6 +547,313 @@ public static class MissionMapBuilder
         float parentScaleY = t.parent != null ? Mathf.Max(0.01f, t.parent.lossyScale.y) : 1f;
         t.localScale = new Vector3(t.localScale.x, t.localScale.y + extend / parentScaleY, t.localScale.z);
         t.position -= Vector3.up * (extend * 0.5f);
+    }
+
+    // ---------------------------------------------------------------- wariant "GTA": siatki kolizji z gry
+
+    static Material MatTwoSided(string name, Color color)
+    {
+        var m = Mat(name, color, 0f, 0.15f);
+        m.SetFloat("_Cull", 0f);          // siatki kolizji bywają jednościenne
+        EditorUtility.SetDirty(m);
+        return m;
+    }
+
+    /// <summary>
+    /// Tworzy siatki z meshes.bin (kształty kolizji GTA, cieniowanie płaskie), ustawia je jako instancje w trzech grupach
+    /// (obiekty / roślinność / tory) i dodaje przełącznik wariantów. Nasze elementy zostają w scenie.
+    /// </summary>
+    static GameObject gtaGroundRoot;
+
+    static GameObject BuildGtaVariants(Mats mats, GameObject trackGo, Terrain[] terrains, TerrainMeta meta)
+    {
+        string meshesJson = RecipeDir + "/meshes.json";
+        if (!File.Exists(meshesJson)) { Debug.Log("[MissionMapBuilder] Brak meshes.json – pomijam wariant GTA."); return null; }
+        var models = JsonUtility.FromJson<MeshModelList>(File.ReadAllText(meshesJson)).models;
+        var instances = JsonUtility.FromJson<MeshInstanceList>(File.ReadAllText(RecipeDir + "/mesh_instances.json")).instances;
+        byte[] bin = File.ReadAllBytes(RecipeDir + "/meshes.bin");
+
+        AssetDatabase.DeleteAsset(GenDir + "/Meshes/Gta");
+        EnsureFolder(GenDir + "/Meshes/Gta");
+        var meshes = new Mesh[models.Length];
+        AssetDatabase.StartAssetEditing();
+        try
+        {
+            for (int i = 0; i < models.Length; i++)
+            {
+                var md = models[i];
+                var v = new Vector3[md.nv];
+                for (int j = 0; j < md.nv; j++)
+                    v[j] = new Vector3(System.BitConverter.ToSingle(bin, md.vo + j * 12), System.BitConverter.ToSingle(bin, md.vo + j * 12 + 4), System.BitConverter.ToSingle(bin, md.vo + j * 12 + 8));
+                var verts = new Vector3[md.nt * 3];
+                var idx = new int[md.nt * 3];
+                for (int k = 0; k < md.nt * 3; k++)
+                {
+                    int vi = System.BitConverter.ToUInt16(bin, md.io + k * 2);
+                    verts[k] = v[vi < md.nv ? vi : 0];
+                    idx[k] = k;
+                }
+                var mesh = new Mesh { name = md.n, indexFormat = verts.Length > 65535 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16 };
+                mesh.vertices = verts;
+                if (md.sub != null && md.sub.Length > 0)
+                {
+                    // grunt: podsiatki wg klasy powierzchni (puste pomijamy)
+                    int subs = 0; foreach (int c in md.sub) if (c > 0) subs++;
+                    mesh.subMeshCount = Mathf.Max(1, subs);
+                    int off = 0, si = 0;
+                    for (int cl = 0; cl < md.sub.Length; cl++)
+                    {
+                        if (md.sub[cl] == 0) continue;
+                        var part = new int[md.sub[cl] * 3];
+                        System.Array.Copy(idx, off * 3, part, 0, part.Length);
+                        mesh.SetTriangles(part, si++);
+                        off += md.sub[cl];
+                    }
+                }
+                else mesh.triangles = idx;
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                AssetDatabase.CreateAsset(mesh, $"{GenDir}/Meshes/Gta/{i}_{md.n}.asset");
+                meshes[i] = mesh;
+            }
+        }
+        finally { AssetDatabase.StopAssetEditing(); }
+
+        var buildingMats = new Material[mats.Building.Length];
+        for (int i = 0; i < buildingMats.Length; i++) buildingMats[i] = MatTwoSided("GtaObj" + i, mats.Building[i].GetColor("_BaseColor"));
+        // kategorie: 0 budynek, 1 ogrodzenie, 2 stacja, 3 most, 4 tunel, 5 szyny, 6 roślinność
+        var catMats = new Material[]
+        {
+            null,
+            MatTwoSided("GtaFence", mats.Fence.GetColor("_BaseColor")),
+            MatTwoSided("GtaStation", mats.Station.GetColor("_BaseColor")),
+            MatTwoSided("GtaBridge", mats.Concrete.GetColor("_BaseColor")),
+            MatTwoSided("GtaTunnel", mats.TunnelConcrete.GetColor("_BaseColor")),
+            MatTwoSided("GtaRail", new Color(0.30f, 0.27f, 0.25f)),
+            MatTwoSided("GtaVeg", new Color(0.30f, 0.38f, 0.20f)),
+        };
+
+        // klasy gruntu GTA: jak teren (0..5) + chodnik/beton (6)
+        string[] groundNames = { "Neutral", "Asphalt", "Grass", "Dirt", "Sand", "Rock", "Pavement" };
+        var groundMats = new Material[groundNames.Length];
+        for (int i = 0; i < groundMats.Length; i++)
+            groundMats[i] = MatTwoSided("GtaGround" + groundNames[i], i < ClassColors.Length ? ClassColors[i] : new Color(0.58f, 0.57f, 0.53f));
+        var roots = new[] { new GameObject("GtaObjects"), null, new GameObject("GtaTracks"), new GameObject("GtaGround") };   // roślinność z GTA nie jest używana
+        gtaGroundRoot = roots[3];
+        var counts = new int[4];
+        foreach (var inst in instances)
+        {
+            if (roots[inst.g] == null) continue;
+            var md = models[inst.m];
+            var go = new GameObject(md.n);
+            go.transform.SetParent(roots[inst.g].transform, false);
+            go.transform.SetPositionAndRotation(new Vector3(inst.p[0], inst.p[1], inst.p[2]), new Quaternion(inst.q[0], inst.q[1], inst.q[2], inst.q[3]));
+            go.AddComponent<MeshFilter>().sharedMesh = meshes[inst.m];
+            var mr = go.AddComponent<MeshRenderer>();
+            if (inst.g == 3 && md.sub != null && md.sub.Length > 0)
+            {
+                var list = new List<Material>();
+                for (int cl = 0; cl < md.sub.Length; cl++) if (md.sub[cl] > 0) list.Add(groundMats[cl]);
+                mr.sharedMaterials = list.ToArray();
+            }
+            else mr.sharedMaterial = inst.c == 0 ? buildingMats[Mathf.Abs(md.n.GetHashCode()) % buildingMats.Length] : catMats[inst.c];
+            go.AddComponent<MeshCollider>().sharedMesh = meshes[inst.m];
+            go.isStatic = true;
+            counts[inst.g]++;
+        }
+
+        // Przełącznik wariantów: które obiekty są "nasze", a które "GTA".
+        var sw = new GameObject("MapVariants").AddComponent<MapVariantSwitch>();
+        sw.slots = new[]
+        {
+            new MapVariantSwitch.Slot { label = "obiekty", key = UnityEngine.InputSystem.Key.F5, ours = new[] { GameObject.Find("MapObjects") }, gta = new[] { roots[0] }, useGta = true },
+            new MapVariantSwitch.Slot { label = "podłoże", key = UnityEngine.InputSystem.Key.F6, ours = new GameObject[0], gta = new[] { roots[3] }, useGta = true, holes = CreateHoleMask(sw.gameObject, terrains, meta) },
+        };
+        foreach (var s in sw.slots) MapVariantSwitch.Apply(s);
+        Debug.Log($"[MissionMapBuilder] Siatki GTA: modeli {models.Length}, instancji obiekty {counts[0]}, tory {counts[2]}, grunt {counts[3]}");
+        return roots[2];
+    }
+
+    /// <summary>Maska dziur terenu (komórki zastępowane siatkami gruntu GTA) + pierwotny stan dziur, żeby dało się przełączać wersje.</summary>
+    static TerrainHoleMask CreateHoleMask(GameObject host, Terrain[] terrains, TerrainMeta meta)
+    {
+        string p = RecipeDir + "/ground_holes.bin";
+        if (!File.Exists(p)) return null;
+        var hm = host.AddComponent<TerrainHoleMask>();
+        hm.terrains = terrains;
+        hm.tile = meta.tile;
+        hm.mask = File.ReadAllBytes(p);
+        hm.baseOpen = new byte[hm.mask.Length];
+        for (int t = 0; t < terrains.Length; t++)
+        {
+            var td = terrains[t].terrainData;
+            int res = td.holesResolution;
+            var open = td.GetHoles(0, 0, res, res);
+            for (int y = 0; y < res; y++)
+                for (int x = 0; x < res; x++)
+                {
+                    if (!open[y, x]) continue;
+                    int i = (y * meta.tile / res + t * meta.tile) * meta.tile + x * meta.tile / res;
+                    hm.baseOpen[i >> 3] |= (byte)(1 << (i & 7));
+                }
+        }
+        return hm;
+    }
+
+    // ---------------------------------------------------------------- dopasowanie toru do kolizji
+
+    /// <summary>Podłoga tunelu (widoczna i z kolizją): górna powierzchnia 0,5 m pod początkiem prefabu, jak płyta mostu.</summary>
+    static GameObject CreateSupportFloorPrefab(Mats m)
+    {
+        var go = new GameObject("TunnelFloor");
+        Prim(PrimitiveType.Cube, "Floor", go.transform, new Vector3(0f, -0.75f, 0f), new Vector3(7.6f, 0.5f, SegmentLength), m.TunnelConcrete, true);
+        return SavePrefab(go, "TunnelFloor");
+    }
+
+    /// <summary>
+    /// Ustawia wysokość ścieżki na powierzchnię, po której faktycznie się jeździ: kolizje GTA z grupy "tory" albo teren
+    /// (lekko wygładzone: mediana + średnia), plus podniesienie podsypki o 12 cm. Szyny i pociąg układane są już z tej ścieżki.
+    /// Tam, gdzie na moście lub w tunelu GTA nie ma kolizji, układamy nasze podparcie (płyta mostu / podłoga tunelu)
+    /// na pierwotnej wysokości trasy.
+    /// </summary>
+    static void SnapPathToCollision(TrackPath path, GameObject tracksRoot, GameObject deckPrefab, GameObject floorPrefab)
+    {
+        Physics.SyncTransforms();
+        int n = path.Count;
+        var orig = new Vector3[n];
+        var kinds = new byte[n];
+        for (int i = 0; i < n; i++) { orig[i] = path.PointAt(i); kinds[i] = (byte)path.KindAt(i); }
+
+        var surf = new float[n];
+        var gtaHit = new bool[n];
+        int onGta = 0, onTerrain = 0;
+        for (int i = 0; i < n; i++)
+        {
+            Vector3 p = orig[i];
+            var hits = Physics.RaycastAll(p + Vector3.up * 3f, Vector3.down, 8f, ~0, QueryTriggerInteraction.Ignore);
+            float best = float.NegativeInfinity;
+            bool gta = false;
+            foreach (var h in hits)
+            {
+                bool isGta = tracksRoot != null && h.collider.transform.IsChildOf(tracksRoot.transform);
+                bool isGround = h.collider is TerrainCollider || (gtaGroundRoot != null && h.collider.transform.IsChildOf(gtaGroundRoot.transform));
+                if (!isGta && !isGround) continue;
+                if (h.point.y > best) { best = h.point.y; gta = isGta; }
+            }
+            surf[i] = best > float.NegativeInfinity ? best : p.y - 0.53f;
+            gtaHit[i] = gta;
+            if (gta) onGta++; else onTerrain++;
+        }
+
+        // Most / tunel bez kolizji GTA wymaga naszego podparcia; zamykamy krótkie luki (do 4 punktów) i dodajemy po 1 punkcie z każdej strony.
+        var support = new bool[n];
+        for (int i = 0; i < n; i++) support[i] = kinds[i] != 0 && !gtaHit[i];
+        var closed = (bool[])support.Clone();
+        for (int i = 0; i < n; i++)
+        {
+            if (support[i]) continue;
+            int a = i - 1; while (a >= 0 && !support[a] && i - a <= 4) a--;
+            int b = i + 1; while (b < n && !support[b] && b - i <= 4) b++;
+            if (a >= 0 && b < n && support[a] && support[b] && b - a <= 5) closed[i] = true;
+        }
+        var dilated = (bool[])closed.Clone();
+        for (int i = 0; i < n; i++) if (closed[i]) { if (i > 0) dilated[i - 1] = true; if (i < n - 1) dilated[i + 1] = true; }
+        support = dilated;
+        for (int i = 0; i < n; i++) if (support[i]) surf[i] = orig[i].y - 0.5f;
+
+        // Mediana (okno 7) usuwa pojedyncze skoki na złączach kolizji, średnia (okno 5) wygładza resztę; podparte punkty zostają bez zmian.
+        var med = new float[n];
+        var buf = new float[7];
+        for (int i = 0; i < n; i++)
+        {
+            int c = 0;
+            for (int k = -3; k <= 3; k++) buf[c++] = surf[Mathf.Clamp(i + k, 0, n - 1)];
+            System.Array.Sort(buf);
+            med[i] = buf[3];
+        }
+        var pts = new Vector3[n];
+        float maxDelta = 0f, sumDelta = 0f;
+        int supported = 0;
+        for (int i = 0; i < n; i++)
+        {
+            float y;
+            if (support[i]) { y = surf[i] + 0.12f; supported++; }
+            else
+            {
+                float sum = 0f;
+                for (int k = -2; k <= 2; k++) sum += med[Mathf.Clamp(i + k, 0, n - 1)];
+                y = sum / 5f + 0.12f;
+            }
+            float d = y - orig[i].y;
+            maxDelta = Mathf.Max(maxDelta, Mathf.Abs(d));
+            sumDelta += d;
+            pts[i] = new Vector3(orig[i].x, y, orig[i].z);
+        }
+        path.Set(pts, kinds);
+        SpawnSupports(orig, kinds, support, deckPrefab, floorPrefab);
+        Debug.Log($"[MissionMapBuilder] Tor dopasowany do kolizji: GTA {onGta}, teren {onTerrain}, nasze podparcie {supported} pkt (z {n}); średnia zmiana wysokości {sumDelta / n:0.00} m, max {maxDelta:0.00} m");
+    }
+
+    /// <summary>Płyta mostu (kolizja + widok) i podłoga tunelu co 4 m wzdłuż punktów oznaczonych jako podparte; pozycje z pierwotnej trasy.</summary>
+    static void SpawnSupports(Vector3[] orig, byte[] kinds, bool[] support, GameObject deckPrefab, GameObject floorPrefab)
+    {
+        var root = new GameObject("TrackSupports").transform;
+        int bridges = 0, floors = 0;
+        for (int i = 0; i < orig.Length - 1; i += 2)
+        {
+            int j = Mathf.Min(i + 2, orig.Length - 1);
+            if (!(support[i] || support[j])) continue;
+            byte kind = 0;
+            for (int k = i; k <= j; k++) if (support[k] && kinds[k] > kind) kind = kinds[k];
+            if (kind == 0) continue;
+            Vector3 d = orig[j] - orig[i];
+            float len = d.magnitude;
+            if (len < 0.2f) continue;
+            var prefab = kind == 2 ? floorPrefab : deckPrefab;
+            var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab, root);
+            go.transform.SetPositionAndRotation((orig[i] + orig[j]) * 0.5f, Quaternion.LookRotation(d / len, Vector3.up));
+            go.transform.localScale = new Vector3(1f, 1f, len / SegmentLength);
+            go.isStatic = true;
+            if (kind == 2) floors++; else bridges++;
+        }
+        Debug.Log($"[MissionMapBuilder] Podparcie: płyty mostu {bridges}, podłoga tunelu {floors}");
+    }
+
+    // ---------------------------------------------------------------- portale tunelu
+
+    /// <summary>Ściana czołowa (betonowa) na obu końcach każdego tunelu – zasłania krawędź nasypu nad obudową.</summary>
+    static void BuildTunnelPortals(TrackPath path, Mats m)
+    {
+        var root = new GameObject("TunnelPortals");
+        int n = path.Count;
+        float spacing = path.Length / Mathf.Max(1, n - 1);
+        int step = Mathf.Max(1, Mathf.RoundToInt(SegmentLength / Mathf.Max(0.1f, spacing)));
+        int count = 0;
+        for (int i = 0; i < n; i++)
+        {
+            bool isTunnel = path.KindAt(i) == TrackPath.Kind.Tunnel;
+            bool prevTunnel = i > 0 && path.KindAt(i - 1) == TrackPath.Kind.Tunnel;
+            bool nextTunnel = i < n - 1 && path.KindAt(i + 1) == TrackPath.Kind.Tunnel;
+            // granice odcinków generatora: segmenty zaczynają się od indeksów 0, step, 2*step... i są tunelowe, gdy zawierają punkt tunelu
+            int boundary;
+            float inward;
+            if (isTunnel && !prevTunnel) { boundary = (i % step == 0) ? i - step : i - (i % step); inward = 1f; }
+            else if (isTunnel && !nextTunnel) { boundary = (i % step == 0) ? i + step : i - (i % step) + step; inward = -1f; }
+            else continue;
+            boundary = Mathf.Clamp(boundary, 0, n - 1);
+            Vector3 p = path.PointAt(boundary);
+            Vector3 d = path.PointAt(Mathf.Min(n - 1, boundary + 1)) - path.PointAt(Mathf.Max(0, boundary - 1));
+            if (d.sqrMagnitude < 1e-4f) continue;
+            d *= inward;
+            var portal = new GameObject("Portal" + (++count));
+            portal.transform.SetParent(root.transform, false);
+            portal.transform.SetPositionAndRotation(p, Quaternion.LookRotation(d.normalized, Vector3.up));
+            Prim(PrimitiveType.Cube, "Left", portal.transform, new Vector3(-6.3f, 4.75f, 0f), new Vector3(5.4f, 10.5f, 2.4f), m.TunnelConcrete, true);
+            Prim(PrimitiveType.Cube, "Right", portal.transform, new Vector3(6.3f, 4.75f, 0f), new Vector3(5.4f, 10.5f, 2.4f), m.TunnelConcrete, true);
+            Prim(PrimitiveType.Cube, "Lintel", portal.transform, new Vector3(0f, 8.0f, 0f), new Vector3(7.2f, 4.0f, 2.4f), m.TunnelConcrete, true);
+            Prim(PrimitiveType.Cube, "Cap", portal.transform, new Vector3(0f, 8.2f, 5.0f), new Vector3(13f, 3.6f, 10f), m.TunnelConcrete, true);
+            foreach (var r in portal.GetComponentsInChildren<Renderer>()) r.gameObject.isStatic = true;
+        }
     }
 
     // ---------------------------------------------------------------- pociąg

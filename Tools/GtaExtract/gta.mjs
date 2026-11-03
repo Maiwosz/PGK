@@ -53,7 +53,9 @@ export function loadIpl(g, ide) {
   const out = [];
   const add = (id, interior, x, y, z, qx, qy, qz, qw, lod, src) => {
     const o = ide.get(id);
-    out.push({ id, model: o ? o.model : `#${id}`, interior, x, y, z, qx, qy, qz, qw, lod, src });
+    // w binarnych IPL pole ma flagi w wyższych bitach (256 redundant, 512 pod wodą, 1024 tunel, 2048 przejście tunelu...); numer obszaru to dolny bajt, 0 i 13 = normalny świat
+    const area = interior & 0xff;
+    out.push({ id, model: o ? o.model : `#${id}`, interior, exterior: area === 0 || area === 13, x, y, z, qx, qy, qz, qw, lod, src });
   };
 
   const parseText = (text, src) => {
@@ -161,4 +163,62 @@ export function readColMesh(g, colInfo) {
     mats[i] = buf[o + 6];
   }
   return { verts, tris, mats };
+}
+
+/**
+ * Pełna geometria kolizji (COL2/COL3): siatka trójkątów + pudła + kule (kule jako ikosfery po jednym podziale).
+ * Zwraca { verts: Float32Array(3n), tris: Uint16Array(3m) } w lokalnym układzie modelu (GTA) albo null.
+ */
+export function readColFull(g, colInfo) {
+  g._colFiles ??= new Map();
+  let buf = g._colFiles.get(colInfo.file);
+  if (!buf) { buf = g.img.read(colInfo.file); g._colFiles.set(colInfo.file, buf); }
+  const p = colInfo.offset;
+  const magic = buf.toString('ascii', p, p + 4);
+  if (magic !== 'COL2' && magic !== 'COL3') return null;
+  const base = p + 4;
+  const nSph = buf.readUInt16LE(p + 72), nBox = buf.readUInt16LE(p + 74), nFace = buf.readUInt16LE(p + 76);
+  const offSph = buf.readUInt32LE(p + 84), offBox = buf.readUInt32LE(p + 88);
+  const offVerts = buf.readUInt32LE(p + 96), offFaces = buf.readUInt32LE(p + 100);
+  const verts = [], tris = [], mats = [];
+  if (nFace && offVerts && offFaces > offVerts) {
+    const nv = Math.floor((offFaces - offVerts) / 6);
+    for (let i = 0; i < nv * 3; i++) verts.push(buf.readInt16LE(base + offVerts + i * 2) / 128);
+    for (let i = 0; i < nFace; i++) {
+      const o = base + offFaces + i * 8;
+      tris.push(buf.readUInt16LE(o), buf.readUInt16LE(o + 2), buf.readUInt16LE(o + 4));
+      mats.push(buf[o + 6]);
+    }
+  }
+  for (let i = 0; i < nBox && offBox; i++) {
+    const o = base + offBox + i * 28;
+    const mn = [buf.readFloatLE(o), buf.readFloatLE(o + 4), buf.readFloatLE(o + 8)], mx = [buf.readFloatLE(o + 12), buf.readFloatLE(o + 16), buf.readFloatLE(o + 20)];
+    const b = verts.length / 3;
+    for (let k = 0; k < 8; k++) verts.push(k & 1 ? mx[0] : mn[0], k & 2 ? mx[1] : mn[1], k & 4 ? mx[2] : mn[2]);
+    for (const t of [[0, 1, 3], [0, 3, 2], [4, 6, 7], [4, 7, 5], [0, 4, 5], [0, 5, 1], [2, 3, 7], [2, 7, 6], [0, 2, 6], [0, 6, 4], [1, 5, 7], [1, 7, 3]]) { tris.push(b + t[0], b + t[1], b + t[2]); mats.push(buf[o + 24]); }
+  }
+  const ico = icosphere();
+  for (let i = 0; i < nSph && offSph; i++) {
+    const o = base + offSph + i * 20;
+    const c = [buf.readFloatLE(o), buf.readFloatLE(o + 4), buf.readFloatLE(o + 8)], r = buf.readFloatLE(o + 12);
+    const b = verts.length / 3;
+    for (let k = 0; k < ico.v.length; k += 3) verts.push(c[0] + ico.v[k] * r, c[1] + ico.v[k + 1] * r, c[2] + ico.v[k + 2] * r);
+    for (const t of ico.t) tris.push(b + t);
+    for (let k = 0; k < ico.t.length / 3; k++) mats.push(buf[o + 16]);
+  }
+  if (!tris.length || verts.length / 3 > 65535) return null;
+  return { verts: Float32Array.from(verts), tris: Uint16Array.from(tris), mats: Uint8Array.from(mats) };
+}
+
+let _ico;
+function icosphere() {
+  if (_ico) return _ico;
+  const t = (1 + Math.sqrt(5)) / 2;
+  let v = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(a => { const l = Math.hypot(...a); return a.map(x => x / l); });
+  let f = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const mid = new Map(), nf = [];
+  const m = (a, b) => { const k = a < b ? a + '_' + b : b + '_' + a; if (mid.has(k)) return mid.get(k); const p = v[a].map((x, i) => (x + v[b][i]) / 2), l = Math.hypot(...p); v.push(p.map(x => x / l)); mid.set(k, v.length - 1); return v.length - 1; };
+  for (const [a, b, c] of f) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); nf.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+  _ico = { v: v.flat(), t: nf.flat() };
+  return _ico;
 }
