@@ -4034,7 +4034,7 @@ SphereCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Radius: 0.306
+  m_Radius: 0.35750002
   m_Center: {x: 0, y: 0.34, z: -0.55}
 --- !u!135 &7764569210779780763
 SphereCollider:
@@ -4055,7 +4055,7 @@ SphereCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 3
-  m_Radius: 0.306
+  m_Radius: 0.35750002
   m_Center: {x: 0, y: 0.34, z: 0.57}
 --- !u!114 &3253827181401127509
 MonoBehaviour:
@@ -4082,11 +4082,40 @@ MonoBehaviour:
   maxSpeed: 25
   frontBrakeDeceleration: 6.5
   rearBrakeDeceleration: 3.5
+  reverseEngageSpeed: 0.3
+  reverseAcceleration: 1.2
+  maxReverseSpeed: 1.6
+  reverseDrag: 2.5
+  slopeInfluence: 0.35
+  standstillHold: 1.2
+  lookAhead: 1.1
+  lookBehind: 0.9
+  maxRollBackSpeed: 8
   steerRatio: 0.5
   speedSteerDamping: 0.06
   maxLateralAccel: 7
   maxLean: 35
   leanSharpness: 6
+  crashSpeedLoss: 3.5
+  slipLimit: 9
+  slipTime: 0.45
+  slipRecoverTime: 0.3
+  minSlipSpeed: 2
+  endoMinSpeed: 4.5
+  endoTime: 1
+  slideDeceleration: 4
+  fallStaminaLoss: 0.15
+  minDownTime: 0.8
+  standUpTime: 1.2
+  fallRoll: 75
+  fallDuration: 0.55
+  frontStandPitch: 42
+  frontStandMinPitch: 22
+  frontStandTime: 0.3
+  toppleTime: 0.55
+  frontContactZ: 0.57
+  fullSeverityImpactSpeed: 10
+  cameraRadius: 0.15
 --- !u!1 &4418064137803454211
 GameObject:
   m_ObjectHideFlags: 0
@@ -5833,6 +5862,9 @@ MonoBehaviour:
   maxStrokeTime: 1.6
   graceTime: 0.12
   reverseSpeedFactor: 1
+  tailTime: 0.1
+  tailFloor: 0.5
+  bufferTime: 0.12
   sweetPowerFraction: 0.85
   staminaRegen: 0.05
   staminaCoastRegen: 0.03

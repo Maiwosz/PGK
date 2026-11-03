@@ -17,6 +17,8 @@ public static class BikePrototypeBuilder
 
     // Geometria (lokalnie, +Z = przód, początek = punkt między kołami na ziemi).
     const float WheelRadius = 0.34f;
+    const float TireHalfThickness = 0.0175f;                 // opona to segmenty o grubości 0,035 m
+    const float TireOuterRadius = WheelRadius + TireHalfThickness;   // tyle ma widoczne koło – sfera kolizji ma być równa
     const float RearAxleZ = -0.55f;
     const float FrontAxleZ = 0.57f;
 
@@ -122,8 +124,8 @@ public static class BikePrototypeBuilder
         rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
 
         var noFriction = CreateNoFrictionMaterial();
-        AddSphereCollider(root, new Vector3(0f, WheelRadius, RearAxleZ), WheelRadius * 0.9f, noFriction);
-        AddSphereCollider(root, new Vector3(0f, WheelRadius, FrontAxleZ), WheelRadius * 0.9f, noFriction);
+        AddSphereCollider(root, new Vector3(0f, WheelRadius, RearAxleZ), TireOuterRadius, noFriction);
+        AddSphereCollider(root, new Vector3(0f, WheelRadius, FrontAxleZ), TireOuterRadius, noFriction);
 
         var controller = root.AddComponent<BikeController>();
 
