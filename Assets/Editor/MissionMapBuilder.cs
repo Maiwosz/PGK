@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 public static class MissionMapBuilder
 {
     const string RecipeDir = "Assets/Mission/Recipe";
-    const string GenDir = "Assets/Mission/Generated";
+    internal const string GenDir = "Assets/Mission/Generated";
     const string MatDir = "Assets/Materials/Mission";
     const string ScenePath = "Assets/Scenes/MissionMap.unity";
     const string BikePrefabPath = "Assets/Prefabs/Bike.prefab";
@@ -39,7 +39,6 @@ public static class MissionMapBuilder
         EnsureFolder(MatDir);
 
         var route = JsonUtility.FromJson<RouteData>(File.ReadAllText(RecipeDir + "/route.json"));
-        var objs = JsonUtility.FromJson<MapObjectList>(File.ReadAllText(RecipeDir + "/objects.json"));
         var meta = JsonUtility.FromJson<TerrainMeta>(File.ReadAllText(RecipeDir + "/terrain.json"));
 
         Mats mats = CreateMaterials();
@@ -82,9 +81,6 @@ public static class MissionMapBuilder
         SetRef(gen, "railPrefab", rail);
         // Most i tunel pochodzą teraz z kolizji GTA (grupa "tory"); nasz generator układa tylko szyny jako wizualizację.
 
-        // Obiekty jako bryły.
-        BuildObjects(objs, mats, terrains);
-
         // Drzewa i krzaki (niskopoligonowe).
         MissionVegetation.Build(meta, terrains);
 
@@ -123,6 +119,9 @@ public static class MissionMapBuilder
             SetRef(hud, "bike", bike.GetComponent<BikeController>());
             SetRef(hud, "pedals", bike.GetComponentInChildren<PedalDrive>());
             SetRef(hud, "steering", bike.GetComponentInChildren<HandlebarSteering>());
+
+            // Rozgrywka: gangsterzy na pierwszym wagonie, wieżyczka, menedżer misji i HUD misji.
+            MissionGameplayBuilder.Apply();
         }
 
         EditorSceneManager.SaveScene(scene, ScenePath);
@@ -136,7 +135,7 @@ public static class MissionMapBuilder
         AssetDatabase.ImportAsset(GenDir + "/Meshes", ImportAssetOptions.ForceUpdate | ImportAssetOptions.ImportRecursive);
         AssetDatabase.ImportAsset(GenDir + "/Prefabs", ImportAssetOptions.ForceUpdate | ImportAssetOptions.ImportRecursive);
         EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        Debug.Log($"[MissionMapBuilder] Gotowe: {ScenePath} (tor {route.lengthM / 1000f:0.00} km, obiektów {objs.objects.Length})");
+        Debug.Log($"[MissionMapBuilder] Gotowe: {ScenePath} (tor {route.lengthM / 1000f:0.00} km)");
     }
 
     // ---------------------------------------------------------------- materiały
@@ -176,7 +175,7 @@ public static class MissionMapBuilder
         return m;
     }
 
-    static Material Mat(string name, Color color, float metallic, float smoothness)
+    internal static Material Mat(string name, Color color, float metallic, float smoothness)
     {
         string path = $"{MatDir}/{name}.mat";
         var m = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -469,86 +468,6 @@ public static class MissionMapBuilder
         return p.y;
     }
 
-    // ---------------------------------------------------------------- obiekty
-
-    static void BuildObjects(MapObjectList list, Mats m, Terrain[] terrains)
-    {
-        var root = new GameObject("MapObjects").transform;
-        var groups = new Dictionary<string, Transform>();
-        int count = 0;
-        foreach (var o in list.objects)
-        {
-            // Mosty i tunele na trasie powstają z danych ścieżki (płyta mostu / obudowa tunelu).
-            if (o.c == "bridge" || o.c == "tunnel") continue;
-
-            if (!groups.TryGetValue(o.c, out var parent))
-            {
-                parent = new GameObject(o.c).transform;
-                parent.SetParent(root, false);
-                groups[o.c] = parent;
-            }
-
-            Material mat = o.c == "fence" ? m.Fence : o.c == "station" ? m.Station
-                         : m.Building[Mathf.Abs(o.n.GetHashCode()) % m.Building.Length];
-            var rotation = new Quaternion(o.q[0], o.q[1], o.q[2], o.q[3]);
-
-            if (o.b != null && o.b.Length >= 6 && o.o != null)
-            {
-                // Bryła złożona z kilku pudełek odwzorowujących rzut budynku.
-                var holder = new GameObject(o.n);
-                holder.transform.SetParent(parent, false);
-                holder.transform.SetPositionAndRotation(new Vector3(o.o[0], o.o[1], o.o[2]), rotation);
-                holder.isStatic = true;
-                for (int i = 0; i + 5 < o.b.Length; i += 6)
-                {
-                    var part = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    part.name = "part";
-                    part.transform.SetParent(holder.transform, false);
-                    part.transform.localPosition = new Vector3(o.b[i], o.b[i + 1], o.b[i + 2]);
-                    part.transform.localScale = new Vector3(Mathf.Max(0.2f, o.b[i + 3]), Mathf.Max(0.2f, o.b[i + 4]), Mathf.Max(0.2f, o.b[i + 5]));
-                    part.GetComponent<Renderer>().sharedMaterial = mat;
-                    Ground(part.transform, terrains);
-                    part.isStatic = true;
-                }
-            }
-            else
-            {
-                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                go.name = o.n;
-                go.transform.SetParent(parent, false);
-                go.transform.SetPositionAndRotation(new Vector3(o.p[0], o.p[1], o.p[2]), rotation);
-                go.transform.localScale = new Vector3(Mathf.Max(0.2f, o.s[0]), Mathf.Max(0.2f, o.s[1]), Mathf.Max(0.2f, o.s[2]));
-                go.isStatic = true;
-                go.GetComponent<Renderer>().sharedMaterial = mat;
-                Ground(go.transform, terrains);
-            }
-            count++;
-        }
-        Debug.Log($"[MissionMapBuilder] Obiekty: {count}");
-    }
-
-    /// <summary>
-    /// Pudełka, które wiszą nad terenem (bo teren różni się od oryginalnego), przedłużamy w dół do ziemi.
-    /// Dotyczy tylko dystansu do 12 m – wysoko zawieszone konstrukcje zostają bez zmian.
-    /// </summary>
-    static void Ground(Transform t, Terrain[] terrains)
-    {
-        float minH = float.MaxValue;
-        for (int ix = -1; ix <= 1; ix++)
-            for (int iz = -1; iz <= 1; iz++)
-            {
-                Vector3 w = t.TransformPoint(new Vector3(ix * 0.5f, 0f, iz * 0.5f));
-                minH = Mathf.Min(minH, TerrainHeight(terrains, w));
-            }
-        float bottom = t.position.y - t.lossyScale.y * 0.5f;
-        float gapToGround = bottom - minH;
-        if (gapToGround <= 0.25f || gapToGround > 12f) return;
-        float extend = gapToGround + 0.3f;
-        float parentScaleY = t.parent != null ? Mathf.Max(0.01f, t.parent.lossyScale.y) : 1f;
-        t.localScale = new Vector3(t.localScale.x, t.localScale.y + extend / parentScaleY, t.localScale.z);
-        t.position -= Vector3.up * (extend * 0.5f);
-    }
-
     // ---------------------------------------------------------------- wariant "GTA": siatki kolizji z gry
 
     static Material MatTwoSided(string name, Color color)
@@ -662,28 +581,21 @@ public static class MissionMapBuilder
             counts[inst.g]++;
         }
 
-        // Przełącznik wariantów: które obiekty są "nasze", a które "GTA".
-        var sw = new GameObject("MapVariants").AddComponent<MapVariantSwitch>();
-        sw.slots = new[]
-        {
-            new MapVariantSwitch.Slot { label = "obiekty", key = UnityEngine.InputSystem.Key.F5, ours = new[] { GameObject.Find("MapObjects") }, gta = new[] { roots[0] }, useGta = true },
-            new MapVariantSwitch.Slot { label = "podłoże", key = UnityEngine.InputSystem.Key.F6, ours = new GameObject[0], gta = new[] { roots[3] }, useGta = true, holes = CreateHoleMask(sw.gameObject, terrains, meta) },
-        };
-        foreach (var s in sw.slots) MapVariantSwitch.Apply(s);
+        // Pod siatkami gruntu GTA teren (heightfield) ma dziury – powierzchnię przejmują siatki.
+        ApplyGroundHoles(terrains, meta);
         Debug.Log($"[MissionMapBuilder] Siatki GTA: modeli {models.Length}, instancji obiekty {counts[0]}, tory {counts[2]}, grunt {counts[3]}");
         return roots[2];
     }
 
-    /// <summary>Maska dziur terenu (komórki zastępowane siatkami gruntu GTA) + pierwotny stan dziur, żeby dało się przełączać wersje.</summary>
-    static TerrainHoleMask CreateHoleMask(GameObject host, Terrain[] terrains, TerrainMeta meta)
+    /// <summary>
+    /// Wycina w terenie komórki, które zastępują siatki gruntu GTA (maska ground_holes.bin: jeden bit na komórkę, wiersz globalny = kafelek * tile + y);
+    /// dziury z TunnelHoles zostają. Stan zapisuje się w TerrainData (generowanym przy budowie mapy).
+    /// </summary>
+    static void ApplyGroundHoles(Terrain[] terrains, TerrainMeta meta)
     {
         string p = RecipeDir + "/ground_holes.bin";
-        if (!File.Exists(p)) return null;
-        var hm = host.AddComponent<TerrainHoleMask>();
-        hm.terrains = terrains;
-        hm.tile = meta.tile;
-        hm.mask = File.ReadAllBytes(p);
-        hm.baseOpen = new byte[hm.mask.Length];
+        if (!File.Exists(p)) return;
+        byte[] mask = File.ReadAllBytes(p);
         for (int t = 0; t < terrains.Length; t++)
         {
             var td = terrains[t].terrainData;
@@ -694,10 +606,11 @@ public static class MissionMapBuilder
                 {
                     if (!open[y, x]) continue;
                     int i = (y * meta.tile / res + t * meta.tile) * meta.tile + x * meta.tile / res;
-                    hm.baseOpen[i >> 3] |= (byte)(1 << (i & 7));
+                    if ((mask[i >> 3] & (1 << (i & 7))) != 0) open[y, x] = false;
                 }
+            td.SetHoles(0, 0, open);
+            EditorUtility.SetDirty(td);
         }
-        return hm;
     }
 
     // ---------------------------------------------------------------- dopasowanie toru do kolizji
@@ -1008,7 +921,7 @@ public static class MissionMapBuilder
 
     // ---------------------------------------------------------------- pomocnicze
 
-    static void SetRef(Object target, string field, Object value)
+    internal static void SetRef(Object target, string field, Object value)
     {
         var so = new SerializedObject(target);
         var prop = so.FindProperty(field);
@@ -1016,7 +929,7 @@ public static class MissionMapBuilder
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    static void SetRefs(Object target, string field, Object[] values)
+    internal static void SetRefs(Object target, string field, Object[] values)
     {
         var so = new SerializedObject(target);
         var prop = so.FindProperty(field);

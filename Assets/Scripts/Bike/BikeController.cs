@@ -11,7 +11,7 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(Rigidbody))]
 public class BikeController : MonoBehaviour
 {
-    public enum FallKind { None, Collision, Slip, Endo }
+    public enum FallKind { None, Collision, Slip }
 
     [Header("Referencje")]
     [SerializeField] PedalDrive pedals;
@@ -79,12 +79,6 @@ public class BikeController : MonoBehaviour
     [Tooltip("Poniżej tej prędkości (m/s) nie ma poślizgu.")]
     [SerializeField] float minSlipSpeed = 2f;
 
-    [Header("Upadki – przewrócenie przez kierownicę")]
-    [Tooltip("Mocne hamowanie przednim hamulcem powyżej tej prędkości (m/s) zaczyna zagrażać przewróceniem.")]
-    [SerializeField] float endoMinSpeed = 4.5f;
-    [Tooltip("Przy endoMinSpeed tyle sekund hamowania daje przewrócenie; przy większej prędkości szybciej (~v²).")]
-    [SerializeField] float endoTime = 1f;
-
     [Header("Upadki – skutki i wstawanie")]
     [Tooltip("Hamowanie o podłoże (m/s^2), gdy rower leży.")]
     [SerializeField] float slideDeceleration = 4f;
@@ -127,6 +121,8 @@ public class BikeController : MonoBehaviour
     Vector3 startPosition;
     float startYaw;
     bool reverseHeld;
+    bool controlLocked;
+    [SerializeField, Tooltip("Hamowanie (m/s^2) roweru, gdy gracz traci kontrolę po końcu misji.")] float lockedBrakeDeceleration = 5f;
 
     // upadki
     bool fallen;
@@ -141,7 +137,6 @@ public class BikeController : MonoBehaviour
     float downTimer;
     float standProgress;
     float slip;
-    float endo;
     float gripLoad;
     string fallText = "";
 
@@ -150,15 +145,33 @@ public class BikeController : MonoBehaviour
     Vector3 cameraBaseLocalPos;
     Vector3 cameraRestLocalToRoot;
     readonly RaycastHit[] camHits = new RaycastHit[8];
+    readonly RaycastHit[] groundHits = new RaycastHit[16];
 
     /// <summary>Prędkość do przodu (m/s) – przy cofaniu 0.</summary>
     public float Speed => Mathf.Max(0f, speed);
     /// <summary>Prędkość ze znakiem (km/h) – ujemna przy cofaniu.</summary>
     public float SpeedKmh => speed * 3.6f;
     public bool Reversing => speed < -0.05f;
+    /// <summary>Prędkość kątowa skrętu (rad/s, + = w prawo).</summary>
+    public float YawRate => yawRate;
     public float Lean => lean;
     public bool FrontBrake { get; private set; }
     public bool RearBrake { get; private set; }
+
+    /// <summary>Gdy true, gracz nie steruje (koniec misji): rower hamuje i staje, wejście z klawiatury jest ignorowane.</summary>
+    public bool ControlLocked
+    {
+        get => controlLocked;
+        set
+        {
+            controlLocked = value;
+            if (value) FrontBrake = RearBrake = reverseHeld = false;
+            if (pedals != null) pedals.enabled = !value && !fallen;
+            if (steering != null) { if (value) steering.ResetSteering(); steering.enabled = !value && !fallen; }
+        }
+    }
+    /// <summary>Ile razy rowerzysta się przewrócił od startu.</summary>
+    public int FallCount { get; private set; }
 
     public bool Fallen => fallen;
     public FallKind LastFallKind => fallKind;
@@ -171,8 +184,8 @@ public class BikeController : MonoBehaviour
     /// <summary>Obciążenie przyczepności: 1 = granica poślizgu.</summary>
     public float GripLoad => gripLoad;
     /// <summary>Jak blisko upadku jesteśmy (0..1): max z poślizgu i przewrócenia przez przedni hamulec.</summary>
-    public float FallRisk => Mathf.Clamp01(Mathf.Max(slip, endo));
-    public string RiskLabel => endo > slip ? "PRZEWRÓCENIE" : "POŚLIZG";
+    public float FallRisk => Mathf.Clamp01(slip);
+    public string RiskLabel => "POŚLIZG";
 
     /// <summary>Zdarzenia roweru dla telemetrii ("fall Slip ...", "stand_up ...").</summary>
     public event System.Action<string> Logged;
@@ -194,13 +207,29 @@ public class BikeController : MonoBehaviour
         }
     }
 
+    /// <summary>Promień w dół, który pomija collidery samego roweru (inaczej tylne koło/rama dają fałszywe nachylenie).</summary>
+    bool GroundRay(Vector3 origin, float maxDistance, out RaycastHit best)
+    {
+        int n = Physics.RaycastNonAlloc(origin, Vector3.down, groundHits, maxDistance, ~0, QueryTriggerInteraction.Ignore);
+        best = default;
+        float nearest = float.MaxValue;
+        bool found = false;
+        for (int i = 0; i < n; i++)
+        {
+            var h = groundHits[i];
+            if (h.collider.attachedRigidbody == rb || h.collider.transform.IsChildOf(transform)) continue;
+            if (h.distance < nearest) { nearest = h.distance; best = h; found = true; }
+        }
+        return found;
+    }
+
     /// <summary>Wyznacza nachylenie podłoża pod rowerem: kierunek jazdy wzdłuż stoku i przyspieszenie od grawitacji.</summary>
     void SampleGround()
     {
         Vector3 flat = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
         slopeAccel = 0f;
         groundTangent = flat;
-        if (Physics.Raycast(rb.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, 1.2f, ~0, QueryTriggerInteraction.Ignore))
+        if (GroundRay(rb.position + Vector3.up * 0.5f, 1.2f, out RaycastHit hit))
         {
             Vector3 t = Vector3.ProjectOnPlane(flat, hit.normal);
             if (t.sqrMagnitude > 1e-4f)
@@ -213,10 +242,8 @@ public class BikeController : MonoBehaviour
                 //    wzdłuż tego wzniesienia, żeby przednie koło nie uderzało w próg i nie traciło prędkości,
                 //  - z tyłu: nachylenie dla grawitacji liczymy ze „średniej” między tyłem a przodem (ok. 2 m),
                 //    więc krótki próg nie hamuje roweru jak ściana.
-                bool hasFront = Physics.Raycast(rb.position + flat * lookAhead + Vector3.up * 0.5f, Vector3.down,
-                    out RaycastHit front, 1.2f + lookAhead * 0.7f, ~0, QueryTriggerInteraction.Ignore);
-                bool hasRear = Physics.Raycast(rb.position - flat * lookBehind + Vector3.up * 0.5f, Vector3.down,
-                    out RaycastHit rear, 1.2f + lookBehind * 0.7f, ~0, QueryTriggerInteraction.Ignore);
+                bool hasFront = GroundRay(rb.position + flat * lookAhead + Vector3.up * 0.5f, 1.2f + lookAhead * 0.7f, out RaycastHit front);
+                bool hasRear = GroundRay(rb.position - flat * lookBehind + Vector3.up * 0.5f, 1.2f + lookBehind * 0.7f, out RaycastHit rear);
                 if (hasFront)
                 {
                     Vector3 ahead = (front.point - hit.point);
@@ -254,6 +281,16 @@ public class BikeController : MonoBehaviour
         // Uderzenie z dużą utratą prędkości = upadek.
         if (!fallen && before - speed > crashSpeedLoss)
             Fall(FallKind.Collision, 1f, $"uderzenie, utrata {(before - speed) * 3.6f:0} km/h", before);
+
+        if (controlLocked && !fallen)
+        {
+            // Koniec misji: rower sam wyhamowuje, bez napędu i skrętu.
+            speed = Mathf.MoveTowards(speed, 0f, lockedBrakeDeceleration * dt);
+            yawRate = 0f;
+            gripLoad = 0f;
+            Move(dt);
+            return;
+        }
 
         if (fallen)
         {
@@ -317,7 +354,7 @@ public class BikeController : MonoBehaviour
         Move(dt);
     }
 
-    /// <summary>Poślizg (zakręt + hamowanie dzielą przyczepność) i przewrócenie przez przedni hamulec.</summary>
+    /// <summary>Poślizg (zakręt + hamowanie dzielą przyczepność).</summary>
     void UpdateFallRisk(float dt, float rawRate, float brake)
     {
         // Poślizg: zapotrzebowanie na przyspieszenie boczne (bez ucinania) + hamowanie, jako okrąg tarcia.
@@ -331,17 +368,7 @@ public class BikeController : MonoBehaviour
         if (gripLoad > 1f) slip += dt / slipTime * Mathf.Min(gripLoad, 2f);
         else slip = Mathf.Max(0f, slip - dt / slipRecoverTime);
 
-        // Przewrócenie przez kierownicę: mocne hamowanie przednie z dużej prędkości.
-        if (FrontBrake && speed > endoMinSpeed)
-        {
-            float k = speed / endoMinSpeed;
-            endo += dt * k * k / endoTime;
-        }
-        else endo = Mathf.Max(0f, endo - dt * 1.5f);
-
-        if (endo >= 1f)
-            Fall(FallKind.Endo, 1f, "przewrócenie przez kierownicę (przedni hamulec)", speed);
-        else if (slip >= 1f)
+        if (slip >= 1f)
             Fall(FallKind.Slip, rawRate, gripLoad > 1f && brake > 0f ? "poślizg (zakręt + hamowanie)" : "poślizg w zakręcie", speed);
     }
 
@@ -378,6 +405,7 @@ public class BikeController : MonoBehaviour
         }
 
         fallen = true;
+        FallCount++;
         fallKind = kind;
         fallSide = side < 0f ? -1f : 1f;
         fallSeverity = Mathf.Clamp01((atSpeed - crashSpeedLoss) / Mathf.Max(0.1f, fullSeverityImpactSpeed - crashSpeedLoss));
@@ -386,7 +414,6 @@ public class BikeController : MonoBehaviour
         standSmooth = 0f;
         fallClock = 0f;
         slip = 0f;
-        endo = 0f;
         gripLoad = 0f;
         FrontBrake = RearBrake = false;
         reverseHeld = false;
@@ -411,8 +438,8 @@ public class BikeController : MonoBehaviour
         fallen = false;
         standProgress = 0f;
         // lean zostaje: wygasa płynnie razem z wizualnym podnoszeniem się
-        if (pedals != null) pedals.enabled = true;
-        if (steering != null) steering.enabled = true;
+        if (pedals != null) pedals.enabled = !controlLocked;
+        if (steering != null) steering.enabled = !controlLocked;
         Logged?.Invoke($"stand_up lay={downTimer:0.0}s");
     }
 
@@ -423,16 +450,20 @@ public class BikeController : MonoBehaviour
         if (pedals != null) pedals.Speed = Mathf.Max(0f, speed);
 
         var kb = Keyboard.current;
-        reverseHeld = !fallen && kb != null && kb.sKey.isPressed;
+        reverseHeld = !fallen && !controlLocked && kb != null && kb.sKey.isPressed;
 
         if (fallen)
         {
             // Wstawanie: przytrzymaj Spację (po minimalnym czasie leżenia i gdy rower prawie stoi).
             downTimer += dt;
-            bool hold = kb != null && kb.spaceKey.isPressed && CanStandUp;
+            bool hold = !controlLocked && kb != null && kb.spaceKey.isPressed && CanStandUp;
             if (hold) standProgress += dt / standUpTime;
             else standProgress = Mathf.Max(0f, standProgress - dt / standUpTime * 1.5f);
             if (standProgress >= 1f) StandUp();
+        }
+        else if (controlLocked)
+        {
+            FrontBrake = RearBrake = false;
         }
         else
         {
@@ -458,7 +489,12 @@ public class BikeController : MonoBehaviour
             }
         }
 
-        if (kb != null && kb.rKey.wasPressedThisFrame) ResetBike();
+        if (kb != null && kb.rKey.wasPressedThisFrame)
+        {
+            // W misji R restartuje całą misję (pociąg, gangsterzy, statystyki); bez misji – tylko rower.
+            if (MissionManager.Instance != null) MissionManager.Instance.Restart();
+            else ResetBike();
+        }
         if (transform.position.y < -10f) ResetBike();
 
         // Obrót kół.
@@ -577,14 +613,14 @@ public class BikeController : MonoBehaviour
         fallClock = 0f;
         standSmooth = 0f;
         standProgress = 0f;
-        slip = endo = gripLoad = 0f;
+        slip = gripLoad = 0f;
         FrontBrake = RearBrake = false;
         lastForward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
         rb.position = startPosition;
         rb.rotation = Quaternion.Euler(0f, yaw, 0f);
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
-        if (pedals != null) { pedals.enabled = true; pedals.ResetState(); }
-        if (steering != null) { steering.enabled = true; steering.ResetSteering(); }
+        if (pedals != null) { pedals.enabled = !controlLocked; pedals.ResetState(); }
+        if (steering != null) { steering.enabled = !controlLocked; steering.ResetSteering(); }
     }
 }

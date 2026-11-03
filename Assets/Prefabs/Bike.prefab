@@ -4101,8 +4101,6 @@ MonoBehaviour:
   slipTime: 0.45
   slipRecoverTime: 0.3
   minSlipSpeed: 2
-  endoMinSpeed: 4.5
-  endoTime: 1
   slideDeceleration: 4
   fallStaminaLoss: 0.15
   minDownTime: 0.8

@@ -18,6 +18,7 @@ public class BikeHud : MonoBehaviour
 
     GUIStyle text;
     TrainController train;
+    MissionManager mission;
 
     void OnGUI()
     {
@@ -27,15 +28,17 @@ public class BikeHud : MonoBehaviour
         float u = Mathf.Max(16f, Screen.height / 32f);
         DrawTopLeft(u);
         if (train == null) train = Object.FindFirstObjectByType<TrainController>();
+        if (mission == null) mission = MissionManager.Instance;
+        if (mission != null && mission.CurrentPhase != MissionManager.Phase.Running) return;   // ekran końcowy misji przejmuje HUD
         if (train != null)
             Label(new Rect(Screen.width * 0.5f - 300f, u, 600f, u * 1.4f),
-                $"POCIĄG  {train.SpeedKmh:0} km/h   •   {train.DistanceTo(bike.transform.position):0} m od Ciebie   •   do mostu {train.RemainingDistance:0} m",
+                $"POCIĄG  {train.SpeedKmh:0} km/h   •   {train.DistanceTo(bike.transform.position):0} m od Ciebie   •   do końca mostu {(mission != null ? mission.DistanceToBridgeEnd : train.RemainingDistance):0} m",
                 u * 0.9f, Gold, TextAnchor.MiddleCenter, FontStyle.Bold);
         if (pedals != null) DrawBottom(u);
         if (bike.Fallen) DrawFallen(u);
 
         Label(new Rect(u, Screen.height - u * 2.6f, Screen.width - u * 2f, u * 1.2f),
-            "A / D – pedałuj (trzymaj do końca skoku, naprzemiennie)  |  LPM na uchwycie – kierowanie  |  S – cofanie (na postoju)  |  po upadku: przytrzymaj Spację  |  R – reset",
+            "A / D – pedałuj (trzymaj do końca skoku, naprzemiennie)  |  LPM na uchwycie – kierowanie  |  S – cofanie (na postoju)  |  po upadku: przytrzymaj Spację  |  R – restart misji",
             u * 0.7f, Dim, TextAnchor.MiddleLeft);
         Label(new Rect(u, Screen.height - u * 1.5f, Screen.width - u * 2f, u * 1.2f),
             "Na trzymanym uchwycie:  Spacja – hamulec (lewy = przód, prawy = tył)  |  Shift / Ctrl – bieg wyżej / niżej (lewy 1–3, prawy 1–7)",

@@ -14,6 +14,10 @@ public class TrainController : MonoBehaviour
     [SerializeField] Material[] wagonBodyMaterials;
     [SerializeField] int wagonCount = 6;
 
+    [Header("Ładunek")]
+    [Tooltip("Doczepiany do pierwszego wagonu za lokomotywą (gangsterzy na dachu).")]
+    [SerializeField] GameObject cargoPrefab;
+
     [Header("Wymiary")]
     [SerializeField] float carLength = 18f;
     [SerializeField] float gap = 1.2f;
@@ -39,6 +43,12 @@ public class TrainController : MonoBehaviour
     float speed;
     float elapsed;
 
+    /// <summary>Wagon z ładunkiem (pierwszy za lokomotywą) – albo null.</summary>
+    public Transform CargoCar { get; private set; }
+    /// <summary>Gdy true, pociąg hamuje i staje (np. po wygranej misji).</summary>
+    public bool Halted { get; set; }
+    /// <summary>Ile sekund zostało do ruszenia pociągu.</summary>
+    public float TimeToStart => Mathf.Max(0f, startDelay - elapsed);
     public float Speed => speed;
     public float SpeedKmh => speed * 3.6f;
     public float TargetSpeed => baseSpeedKmh / 3.6f * speedMultiplier;
@@ -64,6 +74,14 @@ public class TrainController : MonoBehaviour
             }
             cars.Add(go.transform);
             bodies.Add(go.GetComponent<Rigidbody>());
+            if (i == 1 && cargoPrefab != null)
+            {
+                var cargo = Instantiate(cargoPrefab, go.transform);
+                cargo.name = "Cargo";
+                cargo.transform.localPosition = Vector3.zero;
+                cargo.transform.localRotation = Quaternion.identity;
+                CargoCar = go.transform;
+            }
         }
         Place(false);
     }
@@ -72,7 +90,8 @@ public class TrainController : MonoBehaviour
     {
         float dt = Time.fixedDeltaTime;
         elapsed += dt;
-        if (elapsed >= startDelay) speed = Mathf.MoveTowards(speed, TargetSpeed, acceleration * dt);
+        if (elapsed >= startDelay)
+            speed = Halted ? Mathf.MoveTowards(speed, 0f, 2.5f * dt) : Mathf.MoveTowards(speed, TargetSpeed, acceleration * dt);
 
         float max = path.Length;
         frontDistance = Mathf.Min(frontDistance + speed * dt, max);
@@ -94,6 +113,16 @@ public class TrainController : MonoBehaviour
             if (physics && bodies[i] != null) { bodies[i].MovePosition(pos); bodies[i].MoveRotation(rot); }
             else cars[i].SetPositionAndRotation(pos, rot);
         }
+    }
+
+    /// <summary>Ustawia pociąg na starcie trasy (restart misji).</summary>
+    public void ResetTrain()
+    {
+        frontDistance = TrainLength + startMargin;
+        speed = 0f;
+        elapsed = 0f;
+        Halted = false;
+        if (cars.Count > 0) Place(false);
     }
 
     /// <summary>Najmniejsza odległość (m) od punktu do środka któregokolwiek wagonu.</summary>
