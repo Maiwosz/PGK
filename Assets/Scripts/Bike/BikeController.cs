@@ -119,6 +119,42 @@ public class BikeController : MonoBehaviour
     float slopePitch;
     bool grounded;
     Vector3 startPosition;
+
+    // Awaryjny powrót: gdyby rower mimo wszystko wypadł poza kolizję mapy (dziura w siatce), wraca na ostatnie pewne miejsce.
+    [Header("Zabezpieczenie przed wypadnięciem z mapy")]
+    [Tooltip("Spadek (m) poniżej ostatniego pewnego miejsca, po którym rower wraca na to miejsce.")]
+    [SerializeField] float fallOutDepth = 6f;
+    [Header("Wjazd na niskie stopnie")]
+    [Tooltip("Gdy podłoże pod którymś kołem jest wyżej od roweru o więcej niż tyle (m), rower zaczyna wjeżdżać na stopień.")]
+    [SerializeField] float stepClimbMinGap = 0.012f;
+    [Tooltip("O ile bardziej w górę (sinus nachylenia) niż stok pod rowerem musi iść prędkość, by uznać wjazd na skos.")]
+    [SerializeField] float stepClimbPitchMargin = 0.08f;
+    [Tooltip("Wspinanie kończy się, gdy rower jest wyżej niż tyle (m) ponad podłożem pod osiami kół.")]
+    [SerializeField] float stepClimbTopMargin = 0.1f;
+    [Tooltip("Ile sinusa nachylenia toru ruchu na każdy metr brakującej wysokości (większe = bardziej stromy wjazd).")]
+    [SerializeField] float stepClimbGain = 8f;
+    bool climbing;
+    bool wasClimbing;
+    float climbPitchSin;
+
+    [Header("Opadanie po podskoku")]
+    [Tooltip("Wysokość środka roweru nad podłożem (m) w spoczynku – punkt odniesienia dla wykrywania „zawisu”.")]
+    [SerializeField] float groundClearance = 0.02f;
+    [Tooltip("Gdy rower jest wyżej niż to nad podłożem, spada grawitacją (po podskoku na krawędzi) zamiast dociskać się wolno do ziemi.")]
+    [SerializeField] float hoverEnterHeight = 0.06f;
+    [SerializeField] float hoverExitHeight = 0.02f;
+    [SerializeField] float tireRadius = 0.3575f;
+    [SerializeField] float wheelAxleFront = 0.57f;
+    [SerializeField] float wheelAxleRear = 0.55f;
+    [Tooltip("O ile (m) środek roweru może przekroczyć wysokość podłoża przed nim podczas wspinania się na stopień.")]
+    [SerializeField] float climbCeilingMargin = 0.04f;
+    float groundGap;
+    float climbCeilingY;
+    bool hovering;
+    Vector3 safePosition;
+    float safeYaw;
+    float groundedTime;
+    bool hasSafe;
     float startYaw;
     bool reverseHeld;
     bool controlLocked;
@@ -207,6 +243,29 @@ public class BikeController : MonoBehaviour
         }
     }
 
+    /// <summary>Zapamiętuje miejsce, w którym rower stabilnie stał na ziemi, i przywraca je po wypadnięciu poza mapę.</summary>
+    void TrackSafePosition(float dt)
+    {
+        if (grounded && groundNormal.y > 0.7f)
+        {
+            groundedTime += dt;
+            if (groundedTime > 0.75f) { safePosition = rb.position; safeYaw = yaw; hasSafe = true; }
+        }
+        else groundedTime = 0f;
+
+        if (hasSafe && rb.position.y < safePosition.y - fallOutDepth)
+        {
+            rb.position = safePosition + Vector3.up * 0.1f;
+            rb.rotation = Quaternion.Euler(0f, safeYaw, 0f);
+            rb.linearVelocity = Vector3.zero;
+            yaw = safeYaw;
+            speed = 0f;
+            lastForward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+            groundedTime = 0f;
+            Logged?.Invoke("fall_out_recover");
+        }
+    }
+
     /// <summary>Promień w dół, który pomija collidery samego roweru (inaczej tylne koło/rama dają fałszywe nachylenie).</summary>
     bool GroundRay(Vector3 origin, float maxDistance, out RaycastHit best)
     {
@@ -229,6 +288,9 @@ public class BikeController : MonoBehaviour
         Vector3 flat = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
         slopeAccel = 0f;
         groundTangent = flat;
+        groundGap = 0f;
+        climbCeilingY = float.PositiveInfinity;
+        float frontGroundY = float.NegativeInfinity;
         if (GroundRay(rb.position + Vector3.up * 0.5f, 1.2f, out RaycastHit hit))
         {
             Vector3 t = Vector3.ProjectOnPlane(flat, hit.normal);
@@ -246,6 +308,7 @@ public class BikeController : MonoBehaviour
                 bool hasRear = GroundRay(rb.position - flat * lookBehind + Vector3.up * 0.5f, 1.2f + lookBehind * 0.7f, out RaycastHit rear);
                 if (hasFront)
                 {
+                    frontGroundY = front.point.y;
                     Vector3 ahead = (front.point - hit.point);
                     if (ahead.sqrMagnitude > 0.04f)
                     {
@@ -261,6 +324,15 @@ public class BikeController : MonoBehaviour
                 groundTangent = t;
                 slopeAccel = Vector3.Dot(Physics.gravity, accelDir) * slopeInfluence;   // < 0 pod górę
             }
+            // Odniesienie wysokości: najwyższy z punktów pod środkiem i obiema osiami kół (jedno koło może stać na
+            // krawężniku, a rower nie przechyla się), żeby docisk nie wpychał koła w stopień.
+            float refY = hit.point.y;
+            if (GroundRay(rb.position + flat * wheelAxleFront + Vector3.up * 0.5f, 1.2f, out RaycastHit fw)) refY = Mathf.Max(refY, fw.point.y);
+            if (GroundRay(rb.position - flat * wheelAxleRear + Vector3.up * 0.5f, 1.2f, out RaycastHit rw)) refY = Mathf.Max(refY, rw.point.y);
+            // Na stoku środek koła leży wyżej niż na płaskim (r/cos − r) – to nie jest zawis.
+            groundGap = rb.position.y - refY - groundClearance - tireRadius * (1f / Mathf.Max(0.5f, hit.normal.y) - 1f);
+            // Wspinanie nie powinno unieść roweru wyżej niż podłoże widziane przed nim (najwyższa płaszczyzna stopnia).
+            climbCeilingY = Mathf.Max(refY, frontGroundY) + groundClearance + climbCeilingMargin;
             groundNormal = hit.normal;
             grounded = true;
         }
@@ -271,9 +343,38 @@ public class BikeController : MonoBehaviour
     {
         float dt = Time.fixedDeltaTime;
         SampleGround();
+        TrackSafePosition(dt);
 
         // Kolizje: jeśli fizyka wyhamowała ruch wzdłuż kierunku jazdy, przejmujemy tę prędkość.
-        float actual = Vector3.Dot(rb.linearVelocity, lastForward);
+        Vector3 vel = rb.linearVelocity;
+        float actual = Vector3.Dot(vel, lastForward);
+
+        // Wjazd na stopień/skos. Solver odchyla prędkość w górę wzdłuż skosu (jednorazowa strata ~cos(kąta)); gdybyśmy co
+        // krok z powrotem ustawiali ruch poziomo i obcinali prędkość do składowej "do przodu", strata kumulowałaby się
+        // i rower stawałby przed krawężnikiem. Dlatego, gdy prędkość jest odchylona w górę bardziej niż wynika ze stoku,
+        // jedziemy dalej wzdłuż skosu. Warunek groundGap < próg kończy wspinanie, gdy rower dojedzie do poziomu podłoża
+        // pod osiami kół (inaczej utrzymywałby kierunek "w górę" i unosił się coraz wyżej).
+        climbing = false;
+        if (grounded && !fallen && speed > 0.5f && rb.position.y < climbCeilingY - 0.005f)
+        {
+            float mag = vel.magnitude;
+            bool geometric = groundGap < -stepClimbMinGap;
+            bool deflected = mag > 0.5f && vel.y > 0.15f && vel.y / mag > groundTangent.y + stepClimbPitchMargin
+                && groundGap < stepClimbTopMargin
+                && Vector3.Dot(new Vector3(vel.x, 0f, vel.z), Quaternion.Euler(0f, yaw, 0f) * Vector3.forward) > 0.5f * mag;
+            if (geometric || deflected)
+            {
+                float sinPitch = 0f;
+                if (deflected) { actual = mag; sinPitch = vel.y / mag; }
+                if (geometric) sinPitch = Mathf.Max(sinPitch, -groundGap * stepClimbGain);
+                // przy zbliżaniu się do poziomu stopnia pochylenie maleje, żeby nie "wystrzelić" ponad krawędź
+                float room = Mathf.Max(0.01f, climbCeilingY - rb.position.y);
+                sinPitch = Mathf.Min(sinPitch, room * stepClimbGain);
+                climbPitchSin = Mathf.Clamp(sinPitch, 0.05f, 0.8f);
+                climbing = true;
+            }
+        }
+
         float before = speed;
         if (speed >= 0f) speed = Mathf.Min(speed, Mathf.Max(0f, actual) + 0.01f);
         else speed = Mathf.Max(speed, Mathf.Min(0f, actual) - 0.01f);
@@ -383,11 +484,23 @@ public class BikeController : MonoBehaviour
         // Na ziemi jedziemy wzdłuż stoku (prędkość ma składową pionową), w powietrzu zostaje fizyka.
         // Grawitację fizyki wyłączamy na ziemi: wpływ nachylenia liczymy sami (slopeAccel), a bez tego
         // grawitacja byłaby policzona dwa razy (pod górę rower tracił prędkość, a stojący zsuwał się po stoku).
-        rb.useGravity = !grounded;
-        Vector3 dir = grounded ? groundTangent : forward;
+        // Zawis: po podskoku na krawędzi rower bywa wyżej niż podłoże, ale promień wciąż "widzi" ziemię (do 0,7 m) –
+        // wtedy spada normalną grawitacją, zamiast opadać z prędkością docisku (0,3 m/s).
+        hovering = !climbing && groundGap > (hovering ? hoverExitHeight : hoverEnterHeight);
+        bool onGround = grounded && !hovering;
+        rb.useGravity = !onGround;
+        Vector3 dir = onGround ? groundTangent : forward;
+        if (climbing) dir = forward * Mathf.Sqrt(1f - climbPitchSin * climbPitchSin) + Vector3.up * climbPitchSin;
         Vector3 v = dir * speed;
-        if (grounded) v -= groundNormal * 0.3f;     // lekki docisk do podłoża, żeby nie odbijać się na nierównościach
-        else v.y = rb.linearVelocity.y;
+        if (onGround && !climbing) v -= groundNormal * 0.3f;     // lekki docisk do podłoża, żeby nie odbijać się na nierównościach
+        else if (!climbing)
+        {
+            v.y = rb.linearVelocity.y;
+            // Zaraz po zakończeniu wspinania nie zostawiamy prędkości pionowej ze skosu – inaczej rower "wystrzeliwuje"
+            // ponad krawędź i potem długo opada.
+            if (wasClimbing) v.y = Mathf.Min(v.y, 0.3f);
+        }
+        wasClimbing = climbing;
         rb.linearVelocity = v;
         lastForward = dir;
     }
@@ -613,6 +726,8 @@ public class BikeController : MonoBehaviour
         fallClock = 0f;
         standSmooth = 0f;
         standProgress = 0f;
+        hasSafe = false;
+        groundedTime = 0f;
         slip = gripLoad = 0f;
         FrontBrake = RearBrake = false;
         lastForward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;

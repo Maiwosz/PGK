@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 /// <summary>
 /// Przebieg misji "Wrong Side of the Tracks": zabij gangsterów na pierwszym wagonie, nie gubiąc pociągu.
@@ -38,6 +39,11 @@ public class MissionManager : MonoBehaviour
     [Header("Mowa")]
     [SerializeField] string introLine = "Aw shit, here we go again.";
     [SerializeField] string loseLine = "All we had to do was follow the damn train, CJ!";
+
+    [Header("Debug")]
+    [Tooltip("Wyłącza przegranie misji (zbyt duży dystans do pociągu, przejechanie przez most) – do testowania. Przełącznik: F9 (tylko w edytorze i buildach deweloperskich).")]
+    [SerializeField] bool disableLosing;
+    public bool LosingDisabled => disableLosing;
 
     public Phase CurrentPhase { get; private set; } = Phase.Running;
     public LossReason Reason { get; private set; }
@@ -158,6 +164,11 @@ public class MissionManager : MonoBehaviour
     {
         if (bike == null || train == null) return;
         float dt = Time.deltaTime;
+        if (Debug.isDebugBuild && Keyboard.current != null && Keyboard.current.f9Key.wasPressedThisFrame)
+        {
+            disableLosing = !disableLosing;
+            farTimer = 0f;
+        }
         if (CurrentPhase != Phase.Running) return;
 
         MissionTime += dt;
@@ -171,6 +182,8 @@ public class MissionManager : MonoBehaviour
 
         AliveGangsters = CountAlive();
         if (TotalGangsters > 0 && AliveGangsters == 0) { Win(); return; }
+
+        if (disableLosing) { farTimer = 0f; return; }
 
         if (TrainDistance > loseDistance) farTimer += dt;
         else farTimer = Mathf.Max(0f, farTimer - dt * 2f);
