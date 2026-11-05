@@ -79,6 +79,8 @@ public class Gun : MonoBehaviour
     [SerializeField] float bulletDamage = 34f;
     [Tooltip("Po ilu sekundach pocisk znika, jeśli w nic nie trafi.")]
     [SerializeField] float bulletLifetime = 3f;
+    [Tooltip("Najkrótszy odstęp (s) między strzałami – ogranicza szybkostrzelność przy szybkim klikaniu PPM. 0 = bez limitu.")]
+    [SerializeField, Min(0f)] float fireInterval = 0.25f;
 
     [Header("Dźwięk wystrzału")]
     [Tooltip("Dźwięk strzału. Puste = krótki szum generowany w kodzie (jak strzały wieżyczki, bez plików dźwiękowych).")]
@@ -135,6 +137,8 @@ public class Gun : MonoBehaviour
     Collider[] ownColliders;
     Collider[] bulletIgnore;
     bool cursorHidden;
+    // Czas (Time.time), od którego wolno oddać kolejny strzał.
+    float nextFireTime;
     readonly RaycastHit[] hits = new RaycastHit[16];
 
     public State Current => state;
@@ -253,9 +257,13 @@ public class Gun : MonoBehaviour
         {
             AimPoint = FindAimPoint(ray);
             HoldOnSightLine(ray);
-            // Strzał tylko przy trzymanej broni; wasPressedThisFrame = jeden strzał na jedno kliknięcie.
-            if (mouse.rightButton.wasPressedThisFrame)
+            // Strzał tylko przy trzymanej broni; wasPressedThisFrame = jeden strzał na jedno kliknięcie,
+            // a kliknięcia przed upływem fireInterval od poprzedniego strzału są pomijane.
+            if (mouse.rightButton.wasPressedThisFrame && Time.time >= nextFireTime)
+            {
+                nextFireTime = Time.time + fireInterval;
                 Fire();
+            }
         }
 
         if (returning) UpdateReturn();
