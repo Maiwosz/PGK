@@ -897,6 +897,10 @@ public static class MissionMapBuilder
         so.FindProperty("cameraAimFactor").floatValue = 0.4f;
         so.FindProperty("shotVolume").floatValue = 1f;
         so.FindProperty("showShotLine").boolValue = true;
+        so.FindProperty("bulletSpeed").floatValue = 200f;
+        so.FindProperty("bulletDamage").floatValue = 7f;
+        so.FindProperty("shotLineWidth").floatValue = 0.08f;
+        so.FindProperty("shotLineLength").floatValue = 20f;
         so.ApplyModifiedPropertiesWithoutUndo();
     }
 

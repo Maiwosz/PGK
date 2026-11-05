@@ -30,10 +30,10 @@ public class TrainController : MonoBehaviour
     [Tooltip("Prędkość pociągu w grze oryginalnej (ok. 90 km/h).")]
     [SerializeField] float baseSpeedKmh = 90f;
     [Tooltip("Mnożnik prędkości – do strojenia trudności (1 = jak w oryginale).")]
-    [SerializeField, Range(0.05f, 1.5f)] float speedMultiplier = 0.3f;
-    [SerializeField] float acceleration = 0.8f;
+    [SerializeField, Range(0.05f, 1.5f)] float speedMultiplier = 0.25f;
+    [SerializeField] float acceleration = 0.3f;
     [Tooltip("Po ilu sekundach od startu pociąg rusza.")]
-    [SerializeField] float startDelay = 3f;
+    [SerializeField] float startDelay = 5f;
     [Tooltip("Zapas (m) między końcem składu a początkiem trasy przy starcie.")]
     [SerializeField] float startMargin = 8f;
 

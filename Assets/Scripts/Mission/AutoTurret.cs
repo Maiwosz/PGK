@@ -27,7 +27,7 @@ public class AutoTurret : MonoBehaviour
     [Tooltip("Prędkość obrotu lufy (stopnie/s).")]
     [SerializeField] float slewSpeed = 150f;
     [Tooltip("Maksymalny błąd celowania (stopnie), przy którym wieżyczka już strzela.")]
-    [SerializeField] float fireCone = 4f;
+    [SerializeField] float fireCone = 8f;
     [Tooltip("Po utracie linii strzału wieżyczka trzyma cel jeszcze tyle sekund.")]
     [SerializeField] float lostGrace = 0.25f;
 
@@ -46,9 +46,9 @@ public class AutoTurret : MonoBehaviour
 
     [Header("Ogień")]
     [SerializeField] float fireInterval = 0.09f;
-    [SerializeField] int magazine = 30;
+    [SerializeField] int magazine = 15;
     [SerializeField] float reloadTime = 1.8f;
-    [SerializeField] float damage = 7f;
+    [SerializeField] float damage = 1.5f;
     [Tooltip("Szansa trafienia z bliska i z maksymalnego zasięgu.")]
     [SerializeField, Range(0f, 1f)] float hitChanceNear = 0.85f;
     [SerializeField, Range(0f, 1f)] float hitChanceFar = 0.3f;
