@@ -843,9 +843,13 @@ public static class MissionMapBuilder
         }
 
         // Jedna kolizja na cały wagon, kinematyczne ciało (porusza je TrainController).
+        // Dół sięga 0,6 m poniżej pivotu (pod poziom podsypki), żeby koła roweru nie wślizgiwały się pod wagon.
+        // Wagony mają kolizję wydłużoną do przodu o 1,6 m – zakrywa przerwę (1,2 m) do poprzedniego wagonu
+        // z zapasem na łuki, więc rowerem nie da się przejechać między wagonami. Czoło lokomotywy i tył
+        // ostatniego wagonu zostają bez niewidzialnego przedłużenia.
         var box = root.AddComponent<BoxCollider>();
-        box.center = new Vector3(0f, 2.65f, 0f);
-        box.size = new Vector3(3.0f, 4.7f, 18f);
+        box.center = new Vector3(0f, 2.2f, locomotive ? 0f : 0.8f);
+        box.size = new Vector3(3.0f, 5.6f, locomotive ? 18f : 19.6f);
         var rb = root.AddComponent<Rigidbody>();
         rb.isKinematic = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;

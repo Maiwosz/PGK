@@ -17,11 +17,16 @@ public class Bullet : MonoBehaviour
     Gun owner;
     readonly RaycastHit[] hits = new RaycastHit[8];
 
-    // Linia strzału (opcjonalna): od wylotu lufy do bieżącej pozycji pocisku, po zakończeniu lotu gaśnie.
+    // Ogonek (opcjonalny): odcinek o stałej długości ciągnący się za pociskiem. Po zakończeniu lotu jego koniec
+    // dalej "dolatuje" do miejsca trafienia, a ogonek przy tym gaśnie.
     LineRenderer line;
     Color lineColor;
     float lineFade;
     float fadeLeft;
+    float tailLength;
+    Vector3 origin;      // miejsce wystrzału – ogonek nie sięga dalej wstecz niż wylot lufy
+    float travelled;     // droga przebyta przez pocisk od wylotu
+    float tailBack;      // droga przebyta przez koniec ogonka (po zakończeniu lotu goni czoło)
     bool finished;
 
     /// <summary>
@@ -38,10 +43,12 @@ public class Bullet : MonoBehaviour
     }
 
     /// <summary>
-    /// Włącza linię strzału: od miejsca wystrzału do pocisku (przy lufie bledsza). Po trafieniu albo po czasie życia
-    /// pocisk znika, a linia zostaje jeszcze <paramref name="fadeTime"/> sekund i gaśnie.
+    /// Włącza ogonek za pociskiem: odcinek o długości <paramref name="length"/> (m) od pocisku wstecz wzdłuż toru,
+    /// zwężający się i przezroczysty na końcu. Tuż po strzale jest krótszy – nie wystaje za wylot lufy.
+    /// Po trafieniu albo po czasie życia pocisk znika, a ogonek dolatuje do miejsca trafienia i gaśnie
+    /// w ciągu <paramref name="fadeTime"/> sekund.
     /// </summary>
-    public void ShowShotLine(Material material, float width, Color color, float fadeTime)
+    public void ShowShotLine(Material material, float width, Color color, float fadeTime, float length)
     {
         var go = new GameObject("ShotLine");
         go.transform.SetParent(transform, false);
@@ -49,14 +56,27 @@ public class Bullet : MonoBehaviour
         line.positionCount = 2;
         line.useWorldSpace = true;
         line.widthMultiplier = width;
+        line.widthCurve = AnimationCurve.Linear(0f, 0.25f, 1f, 1f); // koniec ogonka cieńszy niż czoło
         line.sharedMaterial = material;
         line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         line.receiveShadows = false;
-        line.SetPosition(0, transform.position);
-        line.SetPosition(1, transform.position);
         lineColor = color;
         lineFade = fadeTime;
+        tailLength = Mathf.Max(0f, length);
+        origin = transform.position;
+        travelled = 0f;
+        tailBack = 0f;
+        UpdateLine();
         SetLineAlpha(1f);
+    }
+
+    /// <summary>Ustawia ogonek: od punktu na torze (najdalej <see cref="tailLength"/> za czołem) do pocisku.</summary>
+    void UpdateLine()
+    {
+        Vector3 dir = velocity.sqrMagnitude > 1e-8f ? velocity.normalized : transform.forward;
+        float back = Mathf.Max(tailBack, travelled - tailLength);
+        line.SetPosition(0, origin + dir * back);   // koniec ogonka
+        line.SetPosition(1, origin + dir * travelled); // czoło (pocisk / miejsce trafienia)
     }
 
     /// <summary>Domyślny wygląd pocisku, gdy broń nie ma przypisanego prefabu: mała kula bez kolizji.</summary>
@@ -92,17 +112,19 @@ public class Bullet : MonoBehaviour
             return;
         }
         transform.position += step;
-        if (line != null) line.SetPosition(1, transform.position);
+        travelled += dist;
+        if (line != null) UpdateLine();
     }
 
-    /// <summary>Koniec lotu: bez linii pocisk od razu znika; z linią – chowa się, a linia gaśnie.</summary>
+    /// <summary>Koniec lotu: bez ogonka pocisk od razu znika; z ogonkiem – chowa się, a ogonek dolatuje i gaśnie.</summary>
     void Finish()
     {
         if (line == null || lineFade <= 0f) { Destroy(gameObject); return; }
 
         finished = true;
         fadeLeft = lineFade;
-        line.SetPosition(1, transform.position);
+        tailBack = Mathf.Max(0f, travelled - tailLength);
+        UpdateLine();
         foreach (var r in GetComponentsInChildren<Renderer>())
             if (r != line) r.enabled = false;
     }
@@ -110,18 +132,21 @@ public class Bullet : MonoBehaviour
     void UpdateFade(float dt)
     {
         fadeLeft -= dt;
-        if (fadeLeft <= 0f) { Destroy(gameObject); return; }
+        // Koniec ogonka leci dalej z prędkością pocisku, aż dogoni miejsca trafienia.
+        tailBack += velocity.magnitude * dt;
+        if (fadeLeft <= 0f || tailBack >= travelled) { Destroy(gameObject); return; }
+        UpdateLine();
         SetLineAlpha(fadeLeft / lineFade);
     }
 
     void SetLineAlpha(float a)
     {
-        Color end = lineColor;
-        end.a *= a;
-        Color start = end;
-        start.a *= 0.25f;
-        line.startColor = start;   // przy lufie
-        line.endColor = end;       // przy pocisku / w miejscu trafienia
+        Color head = lineColor;
+        head.a *= a;
+        Color tail = head;
+        tail.a = 0f;
+        line.startColor = tail;   // koniec ogonka – całkiem przezroczysty
+        line.endColor = head;     // czoło przy pocisku / w miejscu trafienia
     }
 
     bool TryHit(Vector3 from, Vector3 dir, float dist, out RaycastHit best)
@@ -158,6 +183,7 @@ public class Bullet : MonoBehaviour
         else if (hit.rigidbody != null)
             hit.rigidbody.AddForceAtPosition(velocity.normalized * hitImpulse, hit.point, ForceMode.Impulse);
 
+        travelled += Vector3.Distance(transform.position, hit.point);
         transform.position = hit.point;
         Finish();
     }

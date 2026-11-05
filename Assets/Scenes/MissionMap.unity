@@ -82475,12 +82475,28 @@ PrefabInstance:
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
+      propertyPath: bulletSpeed
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
       propertyPath: aimReference
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
+      propertyPath: bulletDamage
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
       propertyPath: showShotLine
       value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
+      propertyPath: shotLineWidth
+      value: 0.08
+      objectReference: {fileID: 0}
+    - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
+      propertyPath: shotLineLength
+      value: 20
       objectReference: {fileID: 0}
     - target: {fileID: 5507364683844868619, guid: 8ebd109d8359e974fadf948203c610cc, type: 3}
       propertyPath: cameraAimFactor
@@ -139953,7 +139969,7 @@ MonoBehaviour:
   range: 55
   acquireTime: 0.7
   slewSpeed: 150
-  fireCone: 4
+  fireCone: 8
   lostGrace: 0.25
   burstMin: 4
   burstMax: 7
@@ -139962,9 +139978,9 @@ MonoBehaviour:
   minLockRate: 0.12
   minAccuracyFactor: 0.3
   fireInterval: 0.09
-  magazine: 30
+  magazine: 15
   reloadTime: 1.8
-  damage: 7
+  damage: 1.5
   hitChanceNear: 0.85
   hitChanceFar: 0.3
   missSpread: 2.2
@@ -492804,9 +492820,9 @@ MonoBehaviour:
   bogieSpacing: 11
   railHeight: 0.3
   baseSpeedKmh: 90
-  speedMultiplier: 0.3
-  acceleration: 0.8
-  startDelay: 3
+  speedMultiplier: 0.25
+  acceleration: 0.3
+  startDelay: 5
   startMargin: 8
 --- !u!4 &1288352991
 Transform:
