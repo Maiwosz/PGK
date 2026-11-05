@@ -17,6 +17,7 @@ public static class MissionMapBuilder
     const string MatDir = "Assets/Materials/Mission";
     const string ScenePath = "Assets/Scenes/MissionMap.unity";
     const string BikePrefabPath = "Assets/Prefabs/Bike.prefab";
+    const string GunPrefabPath = "Assets/Prefabs/Gun.prefab";
 
     const float SegmentLength = 4f;
     static readonly string[] ClassNames = { "Neutral", "Asphalt", "Grass", "Dirt", "Sand", "Rock" };
@@ -119,6 +120,9 @@ public static class MissionMapBuilder
             SetRef(hud, "bike", bike.GetComponent<BikeController>());
             SetRef(hud, "pedals", bike.GetComponentInChildren<PedalDrive>());
             SetRef(hud, "steering", bike.GetComponentInChildren<HandlebarSteering>());
+
+            // Broń ręczna gracza (sama przypina się do GunHoldPoint roweru).
+            CreateGun(bike);
 
             // Rozgrywka: gangsterzy na pierwszym wagonie, wieżyczka, menedżer misji i HUD misji.
             MissionGameplayBuilder.Apply();
@@ -767,6 +771,32 @@ public static class MissionMapBuilder
             Prim(PrimitiveType.Cube, "Cap", portal.transform, new Vector3(0f, 8.2f, 5.0f), new Vector3(13f, 3.6f, 10f), m.TunnelConcrete, true);
             foreach (var r in portal.GetComponentsInChildren<Renderer>()) r.gameObject.isStatic = true;
         }
+    }
+
+    // ---------------------------------------------------------------- broń
+
+    /// <summary>
+    /// Wstawia prefab broni z ustawieniami misji. Położenie w scenie nie ma znaczenia – w Start broń sama
+    /// przypina się do GunHoldPoint roweru, a MissionManager znajduje ją do statystyk.
+    /// </summary>
+    static void CreateGun(GameObject bike)
+    {
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(GunPrefabPath);
+        if (prefab == null) { Debug.LogWarning($"[MissionMapBuilder] Brak prefabu broni ({GunPrefabPath}) – pomijam broń."); return; }
+
+        var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+        go.name = "Gun";
+        go.transform.SetPositionAndRotation(bike.transform.position, bike.transform.rotation);
+
+        var so = new SerializedObject(go.GetComponent<Gun>());
+        so.FindProperty("aimReference").enumValueIndex = (int)Gun.AimReference.ScreenCenter;
+        so.FindProperty("maxYaw").floatValue = 120f;
+        so.FindProperty("maxPitch").floatValue = 120f;
+        so.FindProperty("rotateCamera").boolValue = true;
+        so.FindProperty("cameraAimFactor").floatValue = 0.4f;
+        so.FindProperty("shotVolume").floatValue = 1f;
+        so.FindProperty("showShotLine").boolValue = true;
+        so.ApplyModifiedPropertiesWithoutUndo();
     }
 
     // ---------------------------------------------------------------- pociąg
