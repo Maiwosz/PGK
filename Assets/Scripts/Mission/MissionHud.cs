@@ -199,6 +199,11 @@ public class MissionHud : MonoBehaviour
         for (int i = 0; i < mission.KillTimes.Count; i++)
             Row($"   zabity #{i + 1}", Format(mission.KillTimes[i]));
         Row("Strzały / trafienia", $"{mission.ShotsFired} / {mission.Hits}  ({mission.Accuracy * 100f:0}%)");
+        if (mission.HasGun)
+        {
+            Row("   wieżyczka", $"{mission.TurretShots} / {mission.TurretHits}");
+            Row("   broń ręczna", $"{mission.GunShots} / {mission.GunHits}");
+        }
         Row("Przejechany dystans", $"{mission.DistanceRidden:0} m");
         Row("Maksymalna prędkość", $"{mission.MaxSpeedKmh:0.0} km/h");
         Row("Upadki", mission.Falls.ToString());

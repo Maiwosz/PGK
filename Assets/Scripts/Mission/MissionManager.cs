@@ -19,6 +19,8 @@ public class MissionManager : MonoBehaviour
     [SerializeField] BikeController bike;
     [SerializeField] TrainController train;
     [SerializeField] AutoTurret turret;
+    [Tooltip("Broń ręczna gracza (statystyki strzałów). Puste = pierwsza znaleziona w scenie.")]
+    [SerializeField] Gun gun;
     [SerializeField] TrackPath path;
 
     [Header("Porażka – odległość od pociągu")]
@@ -55,9 +57,15 @@ public class MissionManager : MonoBehaviour
     public float MaxSpeedKmh { get; private set; }
     public float ClosestApproach { get; private set; }
     public int Falls => bike != null ? bike.FallCount - fallBase : 0;
-    public int ShotsFired => turret != null ? turret.ShotsFired : 0;
-    public int Hits => turret != null ? turret.Hits : 0;
-    public float Accuracy => turret != null ? turret.Accuracy : 0f;
+    public int TurretShots => turret != null ? turret.ShotsFired : 0;
+    public int TurretHits => turret != null ? turret.Hits : 0;
+    public int GunShots => gun != null ? gun.ShotsFired : 0;
+    public int GunHits => gun != null ? gun.Hits : 0;
+    public bool HasGun => gun != null;
+    // łącznie: wieżyczka + broń ręczna
+    public int ShotsFired => TurretShots + GunShots;
+    public int Hits => TurretHits + GunHits;
+    public float Accuracy => ShotsFired > 0 ? Hits / (float)ShotsFired : 0f;
     public readonly List<float> KillTimes = new List<float>();
     public int TotalGangsters { get; private set; }
     public int AliveGangsters { get; private set; }
@@ -75,6 +83,7 @@ public class MissionManager : MonoBehaviour
         if (bike == null) bike = FindFirstObjectByType<BikeController>();
         if (train == null) train = FindFirstObjectByType<TrainController>();
         if (turret == null) turret = FindFirstObjectByType<AutoTurret>();
+        if (gun == null) gun = FindFirstObjectByType<Gun>();
         if (path == null) path = FindFirstObjectByType<TrackPath>();
     }
 
@@ -141,6 +150,7 @@ public class MissionManager : MonoBehaviour
         if (train != null) train.ResetTrain();
         foreach (var g in Gangster.All) g.ResetState();
         if (turret != null) turret.ResetTurret();
+        if (gun != null) gun.ResetStats();
         BeginRun();
     }
 

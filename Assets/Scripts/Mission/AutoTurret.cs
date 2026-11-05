@@ -411,7 +411,7 @@ public class AutoTurret : MonoBehaviour
     }
 
     /// <summary>Krótki szum z szybko gasnącą obwiednią (strzał / trafienie) – bez plików dźwiękowych.</summary>
-    static AudioClip MakeNoiseClip(float seconds, float decay, float lowpass)
+    internal static AudioClip MakeNoiseClip(float seconds, float decay, float lowpass)
     {
         const int rate = 22050;
         int n = Mathf.CeilToInt(rate * seconds);
