@@ -40,3 +40,8 @@ Thumbs.db
 # Generowane przez Tools/Mission/Build Map (przepis w Assets/Mission/Recipe)
 /Assets/Mission/Generated/
 /Assets/Mission/Generated.meta
+
+# Tymczasowe zrzuty ekranu / pliki robocze edytora
+/Assets/Temp/
+/Assets/Temp.meta
+/ProjectSettings/SceneTemplateSettings.json
