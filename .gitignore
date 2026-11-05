@@ -40,3 +40,12 @@ Thumbs.db
 # Generowane przez Tools/Mission/Build Map (przepis w Assets/Mission/Recipe)
 /Assets/Mission/Generated/
 /Assets/Mission/Generated.meta
+
+# Tymczasowe zrzuty ekranu / pliki robocze edytora
+/Assets/Temp/
+/Assets/Temp.meta
+/ProjectSettings/SceneTemplateSettings.json
+
+# Scena misji jest generowana (GUID-y prefabów z Generated są lokalne) – po klonie uruchom Tools/Mission/Build Map
+/Assets/Scenes/MissionMap.unity
+/Assets/Scenes/MissionMap.unity.meta

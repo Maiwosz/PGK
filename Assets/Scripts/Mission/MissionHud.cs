@@ -38,6 +38,8 @@ public class MissionHud : MonoBehaviour
             DrawMarkers(u);
             DrawTurretPanel(u);
             DrawWarning(u);
+            if (mission.LosingDisabled)
+                Label(new Rect(Screen.width * 0.5f - 400f, u * 0.4f, 800f, u * 1.2f), "DEBUG: przegrana misji wyłączona (F9)", u * 0.9f, Bad, TextAnchor.MiddleCenter, FontStyle.Bold);
         }
         else DrawEndScreen(u);
     }
@@ -155,7 +157,7 @@ public class MissionHud : MonoBehaviour
 
     void DrawWarning(float u)
     {
-        if (mission.CurrentPhase != MissionManager.Phase.Running) return;
+        if (mission.CurrentPhase != MissionManager.Phase.Running || mission.LosingDisabled) return;
         float d = mission.TrainDistance;
         if (d < mission.WarnDistance) return;
 

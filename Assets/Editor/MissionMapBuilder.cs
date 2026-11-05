@@ -20,6 +20,11 @@ public static class MissionMapBuilder
     const string GunPrefabPath = "Assets/Prefabs/Gun.prefab";
 
     const float SegmentLength = 4f;
+
+    // Niskie stopnie (krawężniki, progi) dostają w kolizji skos, żeby rower mógł na nie wjechać zamiast uderzać w ścianę.
+    const float StepMaxHeight = 0.22f;      // wyższe ścianki zostają pionowe
+    const float StepMinHeight = 0.03f;      // niższych nie ruszamy
+    const float StepRampAngle = 30f;        // nachylenie skosu (stopnie)
     static readonly string[] ClassNames = { "Neutral", "Asphalt", "Grass", "Dirt", "Sand", "Rock" };
     static readonly Color[] ClassColors =
     {
@@ -499,6 +504,8 @@ public static class MissionMapBuilder
         AssetDatabase.DeleteAsset(GenDir + "/Meshes/Gta");
         EnsureFolder(GenDir + "/Meshes/Gta");
         var meshes = new Mesh[models.Length];
+        var colMeshes = new Mesh[models.Length];   // kolizja: ściany dwustronne (null = taka sama jak siatka widoczna)
+        int doubledWalls = 0, rampTris = 0, skirtTris = 0;
         AssetDatabase.StartAssetEditing();
         try
         {
@@ -538,6 +545,98 @@ public static class MissionMapBuilder
                 mesh.RecalculateBounds();
                 AssetDatabase.CreateAsset(mesh, $"{GenDir}/Meshes/Gta/{i}_{md.n}.asset");
                 meshes[i] = mesh;
+
+                // Siatki kolizji GTA mają dowolne uzwojenie trójkątów, a MeshCollider w PhysX przepuszcza ciało dynamiczne
+                // przez ścianę od strony "tylnej" (rower wjeżdżał w krawędź i wpadał pod mapę). Do kolizji dokładamy
+                // odwrócone kopie stromych trójkątów, żeby ściany blokowały z obu stron.
+                // Dodatkowo niskie ścianki (stopnie do StepMaxHeight) dostają po obu stronach skos, po którym da się wjechać
+                // (dolna krawędź przesunięta poziomo o wysokość / tan(kąt)); kierunek niskiej strony nie jest znany, więc
+                // skos powstaje z obu stron – ten po stronie wysokiej leży wewnątrz bryły i jest nieosiągalny.
+                List<int> colIdx = null;
+                List<Vector3> colVerts = null;
+                float rampRun = 1f / Mathf.Tan(StepRampAngle * Mathf.Deg2Rad);
+                for (int k = 0; k < verts.Length; k += 3)
+                {
+                    Vector3 a = verts[k], b = verts[k + 1], c = verts[k + 2];
+                    Vector3 nrm = Vector3.Cross(b - a, c - a);
+                    float len = nrm.magnitude;
+                    if (len < 1e-8f) continue;
+                    float ny = Mathf.Abs(nrm.y) / len;
+                    if (ny >= 0.7f) continue;
+                    if (colIdx == null) { colIdx = new List<int>(idx.Length + 64); colIdx.AddRange(idx); colVerts = new List<Vector3>(verts); }
+                    colIdx.Add(k); colIdx.Add(k + 2); colIdx.Add(k + 1);
+                    doubledWalls++;
+
+                    if (ny >= 0.5f) continue;
+                    float yMax = Mathf.Max(a.y, Mathf.Max(b.y, c.y)), yMin = Mathf.Min(a.y, Mathf.Min(b.y, c.y));
+                    float h = yMax - yMin;
+                    var nh = new Vector3(nrm.x, 0f, nrm.z);
+                    float nl = nh.magnitude;
+                    if (h < StepMinHeight || h > StepMaxHeight || nl < 1e-6f) continue;
+                    nh /= nl;
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        int bi = colVerts.Count;
+                        colVerts.Add(a + nh * (side * rampRun * (yMax - a.y)));
+                        colVerts.Add(b + nh * (side * rampRun * (yMax - b.y)));
+                        colVerts.Add(c + nh * (side * rampRun * (yMax - c.y)));
+                        colIdx.Add(bi); colIdx.Add(bi + 1); colIdx.Add(bi + 2);     // oba uzwojenia: skos działa z każdej strony
+                        colIdx.Add(bi); colIdx.Add(bi + 2); colIdx.Add(bi + 1);
+                        rampTris++;
+                    }
+                }
+                // Wolne krawędzie poziomych płacht (GTA często pomija pionową ściankę stopnia – jest tylko wyższa płachta nad niższą):
+                // dokładamy "spódniczkę", skos opadający od krawędzi na zewnątrz i w dół o StepMaxHeight. Jeśli niżej nic nie ma,
+                // jest nieszkodliwa; jeśli jest niższa powierzchnia, tworzy z nią wjazd na stopień.
+                {
+                    var vertId = new Dictionary<Vector3Int, int>(verts.Length);
+                    var ids = new int[verts.Length];
+                    for (int k = 0; k < verts.Length; k++)
+                    {
+                        var q = new Vector3Int(Mathf.RoundToInt(verts[k].x * 500f), Mathf.RoundToInt(verts[k].y * 500f), Mathf.RoundToInt(verts[k].z * 500f));
+                        if (!vertId.TryGetValue(q, out int id)) { id = vertId.Count; vertId[q] = id; }
+                        ids[k] = id;
+                    }
+                    var edgeCount = new Dictionary<long, int>(verts.Length);
+                    for (int k = 0; k < verts.Length; k += 3)
+                        for (int e = 0; e < 3; e++)
+                        {
+                            long key = EdgeKey(ids[k + e], ids[k + (e + 1) % 3]);
+                            edgeCount[key] = edgeCount.TryGetValue(key, out int cnt) ? cnt + 1 : 1;
+                        }
+                    float skirtDrop = StepMaxHeight, skirtRun = StepMaxHeight * rampRun;
+                    for (int k = 0; k < verts.Length; k += 3)
+                    {
+                        Vector3 a = verts[k], b = verts[k + 1], c = verts[k + 2];
+                        Vector3 nrm = Vector3.Cross(b - a, c - a);
+                        float len = nrm.magnitude;
+                        if (len < 1e-8f || Mathf.Abs(nrm.y) / len < 0.9f) continue;
+                        for (int e = 0; e < 3; e++)
+                        {
+                            if (edgeCount[EdgeKey(ids[k + e], ids[k + (e + 1) % 3])] != 1) continue;
+                            Vector3 e0 = verts[k + e], e1 = verts[k + (e + 1) % 3], p3 = verts[k + (e + 2) % 3];
+                            Vector3 dEdge = new Vector3(e1.x - e0.x, 0f, e1.z - e0.z);
+                            if (dEdge.sqrMagnitude < 1e-6f) continue;
+                            Vector3 perp = Vector3.Cross(Vector3.up, dEdge).normalized;
+                            if (Vector3.Dot(perp, p3 - e0) > 0f) perp = -perp;          // na zewnątrz płachty
+                            if (colIdx == null) { colIdx = new List<int>(idx.Length + 64); colIdx.AddRange(idx); colVerts = new List<Vector3>(verts); }
+                            Vector3 off = perp * skirtRun + Vector3.down * skirtDrop;
+                            int bi = colVerts.Count;
+                            colVerts.Add(e0); colVerts.Add(e1); colVerts.Add(e1 + off); colVerts.Add(e0 + off);
+                            colIdx.Add(bi); colIdx.Add(bi + 1); colIdx.Add(bi + 2); colIdx.Add(bi); colIdx.Add(bi + 2); colIdx.Add(bi + 3);
+                            colIdx.Add(bi); colIdx.Add(bi + 2); colIdx.Add(bi + 1); colIdx.Add(bi); colIdx.Add(bi + 3); colIdx.Add(bi + 2);
+                            skirtTris += 2;
+                        }
+                    }
+                }
+                if (colIdx != null)
+                {
+                    var cm = new Mesh { name = md.n + "_col", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+                    cm.SetVertices(colVerts);
+                    cm.triangles = colIdx.ToArray();
+                    AssetDatabase.CreateAsset(cm, $"{GenDir}/Meshes/Gta/{i}_{md.n}_col.asset");
+                    colMeshes[i] = cm;
+                }
             }
         }
         finally { AssetDatabase.StopAssetEditing(); }
@@ -580,16 +679,18 @@ public static class MissionMapBuilder
                 mr.sharedMaterials = list.ToArray();
             }
             else mr.sharedMaterial = inst.c == 0 ? buildingMats[Mathf.Abs(md.n.GetHashCode()) % buildingMats.Length] : catMats[inst.c];
-            go.AddComponent<MeshCollider>().sharedMesh = meshes[inst.m];
+            go.AddComponent<MeshCollider>().sharedMesh = colMeshes[inst.m] != null ? colMeshes[inst.m] : meshes[inst.m];
             go.isStatic = true;
             counts[inst.g]++;
         }
 
         // Pod siatkami gruntu GTA teren (heightfield) ma dziury – powierzchnię przejmują siatki.
         ApplyGroundHoles(terrains, meta);
-        Debug.Log($"[MissionMapBuilder] Siatki GTA: modeli {models.Length}, instancji obiekty {counts[0]}, tory {counts[2]}, grunt {counts[3]}");
+        Debug.Log($"[MissionMapBuilder] Siatki GTA: modeli {models.Length}, instancji obiekty {counts[0]}, tory {counts[2]}, grunt {counts[3]}, dwustronnych ścian kolizji {doubledWalls}, skosów przy niskich stopniach {rampTris}, spódniczek przy krawędziach płacht {skirtTris}");
         return roots[2];
     }
+
+    static long EdgeKey(int a, int b) => a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
 
     /// <summary>
     /// Wycina w terenie komórki, które zastępują siatki gruntu GTA (maska ground_holes.bin: jeden bit na komórkę, wiersz globalny = kafelek * tile + y);
