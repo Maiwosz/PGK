@@ -11,6 +11,10 @@ using UnityEngine;
 ///  - pasek drugiej nogi jest wyblakłym torem (legenda widoczna zawsze),
 ///  - poświata za paskiem ma kolor końcówki, a po kliknięciu jest błysk (cyjanowy szeroki = idealne, biały = dobre,
 ///    pomarańczowy = poza oknem, ciemnoczerwony = odrzucone),
+///  - przy dolnej krawędzi jest jeden pasek biegów (wszystkie biegi od najlżejszego z lewej do najcięższego z prawej).
+///    Kolor segmentu to wydajność pedałowania na tym biegu przy obecnej prędkości: zielony = optimum, im gorzej,
+///    tym cieplej (pomarańczowy, czerwony). Biały wskaźnik pokazuje bieżący bieg, a poświata przy dolnej krawędzi
+///    ma kolor wydajności bieżącego biegu. Optimum wędruje po pasku wraz z prędkością,
 ///  - zmęczenie (stamina) zwęża pole widzenia: ciemna winieta od krawędzi i lekko mniejszy kąt widzenia kamery.
 /// Bez liter i liczb – dźwięk dojdzie osobno.
 /// </summary>
@@ -33,6 +37,16 @@ public class RhythmHud : MonoBehaviour
     [Tooltip("Jak długo trwa błysk po kliknięciu (s).")]
     [SerializeField] float flashTime = 0.28f;
 
+    [Header("Pasek biegów")]
+    [Tooltip("Wysokość paska biegów (jednostki HUD u).")]
+    [SerializeField, Range(0.5f, 2.5f)] float gearBarHeight = 1.1f;
+    [Tooltip("Wysokość poświaty przy dolnej krawędzi (część wysokości ekranu).")]
+    [SerializeField, Range(0.05f, 0.4f)] float gearGlowHeight = 0.18f;
+    [Tooltip("Jasność poświaty biegu (0..1).")]
+    [SerializeField, Range(0.1f, 1f)] float gearGlowAlpha = 0.8f;
+    [Tooltip("Jak szybko wskaźnik biegu i prędkość użyta do kolorów nadążają za zmianą (1/s).")]
+    [SerializeField] float gearSmoothing = 10f;
+
     [Header("Zmęczenie")]
     [Tooltip("Poniżej tej staminy zaczyna się zwężanie pola widzenia.")]
     [SerializeField, Range(0.1f, 1f)] float vignetteStartStamina = 0.6f;
@@ -52,10 +66,14 @@ public class RhythmHud : MonoBehaviour
     static readonly Color BadColor = new Color(0.75f, 0.10f, 0.10f);
     static readonly Color FlashWhite = new Color(1.00f, 0.97f, 0.88f);
 
-    Texture2D glow, vignette;
+    Texture2D glow, glowBottom, vignette;
     MissionManager mission;
     float baseFov;
     float fatigue;       // wygładzone zwężenie 0..1
+    float shownGear;     // wygładzone położenie wskaźnika biegu (w jednostkach miejsca w kolejności)
+    float shownSpeed;    // wygładzona prędkość do kolorowania biegów
+    bool gearInit, gearInit2;
+    Color glowColor;
 
     void Awake()
     {
@@ -68,6 +86,7 @@ public class RhythmHud : MonoBehaviour
     void OnDestroy()
     {
         if (glow != null) Destroy(glow);
+        if (glowBottom != null) Destroy(glowBottom);
         if (vignette != null) Destroy(vignette);
         if (cam != null && baseFov > 0f) cam.fieldOfView = baseFov;
     }
@@ -100,6 +119,71 @@ public class RhythmHud : MonoBehaviour
         var zones = ComputeZones();
         DrawSide(PedalDrive.Foot.Left, u, zones);
         DrawSide(PedalDrive.Foot.Right, u, zones);
+        DrawGearBar(u);
+    }
+
+    // ------------------------------------------------------------ pasek biegów
+
+    // Kolory biegów: cztery wyraźnie różne poziomy (jasna zieleń, żółty, pomarańcz, ciemna czerwień).
+    static readonly Color GearOptimum = new Color(0.15f, 0.95f, 0.25f);
+    static readonly Color GearNear = new Color(1.00f, 0.90f, 0.15f);
+    static readonly Color GearPoor = new Color(1.00f, 0.48f, 0.08f);
+    static readonly Color GearBad = new Color(0.50f, 0.06f, 0.10f);
+
+    /// <summary>Kolor wydajności w stopniach: optimum (zielony), prawie (żółty), słabo (pomarańczowy), źle (ciemnoczerwony).</summary>
+    Color EfficiencyColor(float eff)
+    {
+        float thr = pedals.OptimumThreshold;
+        if (eff >= thr) return GearOptimum;
+        if (eff >= thr - 0.10f) return GearNear;
+        if (eff >= thr - 0.35f) return GearPoor;
+        return GearBad;
+    }
+
+    void DrawGearBar(float u)
+    {
+        int n = pedals.GearCount;
+        if (n <= 0) return;
+
+        float dt = Time.unscaledDeltaTime;
+        float refSpeed = pedals.GearReferenceSpeed(pedals.Speed);
+        if (!gearInit) { shownGear = pedals.GearPosition; shownSpeed = refSpeed; gearInit = true; }
+        float k = 1f - Mathf.Exp(-gearSmoothing * dt);
+        shownGear = Mathf.Lerp(shownGear, pedals.GearPosition, k);
+        shownSpeed = Mathf.Lerp(shownSpeed, refSpeed, 1f - Mathf.Exp(-3f * dt));   // prędkość wygładzona wolniej: optimum nie skacze
+
+        float h = u * gearBarHeight;
+        float x0 = u * 2.4f, x1 = Screen.width - u * 2.4f;
+        float y = Screen.height - h - u * 0.4f;
+        float segW = (x1 - x0) / n;
+
+        // Poświata przy dolnej krawędzi o kolorze wydajności bieżącego biegu.
+        Color target = EfficiencyColor(pedals.EfficiencyAtPosition(pedals.GearPosition, shownSpeed));
+        glowColor = gearInit2 ? Color.Lerp(glowColor, target, 1f - Mathf.Exp(-8f * dt)) : target;
+        gearInit2 = true;
+        Color cur = glowColor;
+        float gh = Screen.height * gearGlowHeight;
+        Color prev = GUI.color;
+        GUI.color = new Color(cur.r, cur.g, cur.b, gearGlowAlpha);
+        GUI.DrawTexture(new Rect(0f, Screen.height - gh, Screen.width, gh), glowBottom);
+        GUI.color = prev;
+
+        Fill(new Rect(x0 - 2f, y - 2f, x1 - x0 + 4f, h + 4f), new Color(0f, 0f, 0f, 0.45f));
+        for (int i = 0; i < n; i++)
+        {
+            Color c = EfficiencyColor(pedals.EfficiencyAtPosition(i, shownSpeed));
+            Fill(new Rect(x0 + i * segW + 1f, y, segW - 2f, h), new Color(c.r, c.g, c.b, 0.95f));
+            if (c == GearOptimum) Fill(new Rect(x0 + i * segW + 1f, y, segW - 2f, 4f), Color.white);   // optimum dodatkowo oznaczone u góry
+        }
+
+        // Wskaźnik bieżącego biegu: biała ramka segmentu i wystające znaczniki u góry i u dołu.
+        float cx = x0 + (shownGear + 0.5f) * segW;
+        float mw = Mathf.Max(segW, u * 0.5f);
+        var box = new Rect(cx - mw * 0.5f, y - u * 0.25f, mw, h + u * 0.5f);
+        Fill(new Rect(box.x, box.y, box.width, 3f), Color.white);
+        Fill(new Rect(box.x, box.yMax - 3f, box.width, 3f), Color.white);
+        Fill(new Rect(box.x, box.y, 3f, box.height), Color.white);
+        Fill(new Rect(box.xMax - 3f, box.y, 3f, box.height), Color.white);
     }
 
     // ------------------------------------------------------------ strefy czasowe
@@ -310,6 +394,25 @@ public class RhythmHud : MonoBehaviour
             }
             glow.SetPixels32(px);
             glow.Apply(false, true);
+        }
+        if (glowBottom == null)
+        {
+            // Poświata przy dolnej krawędzi: najjaśniej przy brzegu, wygasa ku górze i ku bokom.
+            const int W = 128, H = 64;
+            glowBottom = new Texture2D(W, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.HideAndDontSave };
+            var px = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+            {
+                float fy = Mathf.Pow(1f - y / (H - 1f), 2.2f);     // wiersz 0 = dół
+                for (int x = 0; x < W; x++)
+                {
+                    float vx = Mathf.Abs(x / (W - 1f) * 2f - 1f);
+                    float a = fy * Mathf.Clamp01(1f - Mathf.Pow(vx, 3.5f));
+                    px[y * W + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                }
+            }
+            glowBottom.SetPixels32(px);
+            glowBottom.Apply(false, true);
         }
         if (vignette == null)
         {

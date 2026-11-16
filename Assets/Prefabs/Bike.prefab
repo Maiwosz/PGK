@@ -4440,8 +4440,7 @@ MonoBehaviour:
   rollingResistance: 0.08
   airDrag: 0.0035
   maxSpeed: 25
-  frontBrakeDeceleration: 6.5
-  rearBrakeDeceleration: 3.5
+  brakeDeceleration: 8
   reverseEngageSpeed: 0.3
   reverseAcceleration: 1.2
   maxReverseSpeed: 1.6
@@ -6511,8 +6510,6 @@ MonoBehaviour:
   rightKey: 18
   chainrings: 1c0000002600000030000000
   cogs: 200000001c000000180000001500000012000000100000000e000000
-  startFrontGear: 2
-  startRearGear: 3
   wheelRadius: 0.34
   totalMass: 85
   peakTorque: 60
@@ -6523,11 +6520,9 @@ MonoBehaviour:
   maxStrokeTime: 1.6
   tailTime: 0.1
   tailFloor: 0.5
-  sweetPowerFraction: 0.85
+  sweetPowerFraction: 0.95
   staminaRegen: 0.05
   staminaCoastRegen: 0.03
-  staminaDrain: 0.12
-  drainExponent: 1.5
   penaltyStartStamina: 0.5
   minPedalSpeedFactor: 0.35
   crankFollowSpeed: 1500

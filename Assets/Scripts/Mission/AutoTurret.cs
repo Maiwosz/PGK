@@ -288,7 +288,7 @@ public class AutoTurret : MonoBehaviour
                 lon = Mathf.Clamp01(Mathf.Abs(bike.Speed - prevSpeed) / dt / 3.5f);
             }
             prevSteer = angle; prevSpeed = bike.Speed; prevVy = vy; havePrev = true;
-            float brake = bike.FrontBrake || bike.RearBrake ? 0.2f : 0f;
+            float brake = bike.Braking ? 0.2f : 0f;
             raw = Mathf.Clamp01(0.6f * lat + 0.4f * steer + 0.4f * vert + 0.35f * lon + brake + (bike.Reversing ? 0.4f : 0f));
         }
         float rate = raw > disturbance ? 12f : 2.2f;

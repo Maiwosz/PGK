@@ -28,11 +28,9 @@ public class BikeController : MonoBehaviour
     [SerializeField] float airDrag = 0.0035f;           // m/s^2 na (m/s)^2
     [SerializeField] float maxSpeed = 25f;
 
-    [Header("Hamulce (uchwyt trzymany myszką + Spacja)")]
-    [Tooltip("Lewy uchwyt + Spacja (jak w Polsce i reszcie kontynentalnej Europy / USA).")]
-    [SerializeField] float frontBrakeDeceleration = 6.5f;  // m/s^2
-    [Tooltip("Prawy uchwyt + Spacja.")]
-    [SerializeField] float rearBrakeDeceleration = 3.5f;   // m/s^2
+    [Header("Hamulec (Spacja)")]
+    [Tooltip("Hamowanie przy wciśniętej Spacji (m/s^2). Dawniej przód 6,5 + tył 3,5 po jednym na uchwyt.")]
+    [SerializeField] float brakeDeceleration = 8f;
 
     [Header("Cofanie (S)")]
     [Tooltip("Cofanie włącza się tylko na postoju / przy prawie zerowej prędkości (np. po wjechaniu w przeszkodę).")]
@@ -191,8 +189,7 @@ public class BikeController : MonoBehaviour
     /// <summary>Prędkość kątowa skrętu (rad/s, + = w prawo).</summary>
     public float YawRate => yawRate;
     public float Lean => lean;
-    public bool FrontBrake { get; private set; }
-    public bool RearBrake { get; private set; }
+    public bool Braking { get; private set; }
 
     /// <summary>Gdy true, gracz nie steruje (koniec misji): rower hamuje i staje, wejście z klawiatury jest ignorowane.</summary>
     public bool ControlLocked
@@ -201,7 +198,7 @@ public class BikeController : MonoBehaviour
         set
         {
             controlLocked = value;
-            if (value) FrontBrake = RearBrake = reverseHeld = false;
+            if (value) Braking = reverseHeld = false;
             if (pedals != null) pedals.enabled = !value && !fallen;
             if (steering != null) { if (value) steering.ResetSteering(); steering.enabled = !value && !fallen; }
         }
@@ -406,7 +403,7 @@ public class BikeController : MonoBehaviour
         }
 
         float drive = pedals != null ? pedals.GetDriveAcceleration(Mathf.Max(0f, speed)) : 0f;
-        float brake = (FrontBrake ? frontBrakeDeceleration : 0f) + (RearBrake ? rearBrakeDeceleration : 0f);
+        float brake = Braking ? brakeDeceleration : 0f;
 
         if (reverseHeld && speed <= reverseEngageSpeed && drive <= 0.01f)
         {
@@ -530,7 +527,7 @@ public class BikeController : MonoBehaviour
         fallClock = 0f;
         slip = 0f;
         gripLoad = 0f;
-        FrontBrake = RearBrake = false;
+        Braking = false;
         reverseHeld = false;
         fallText = description;
 
@@ -578,29 +575,19 @@ public class BikeController : MonoBehaviour
         }
         else if (controlLocked)
         {
-            FrontBrake = RearBrake = false;
+            Braking = false;
         }
         else
         {
-            bool leftHeld = steering != null && steering.LeftHeld;
-            bool rightHeld = steering != null && steering.RightHeld;
+            // Hamulec (Spacja) i zmiana biegu (Shift = cięższy, Ctrl = lżejszy; jeden klik = jeden bieg) – bez trzymania uchwytu.
+            Braking = kb != null && kb.spaceKey.isPressed;
 
-            // Hamulec i manetka działają tylko na uchwycie, który aktualnie trzyma "ręka" (LPM).
-            // Lewy: hamulec przedni + przerzutka przednia (1–3). Prawy: hamulec tylny + przerzutka tylna (1–7).
-            bool space = kb != null && kb.spaceKey.isPressed;
-            FrontBrake = leftHeld && space;
-            RearBrake = rightHeld && space;
-
-            if (kb != null && pedals != null && (leftHeld || rightHeld))
+            if (kb != null && pedals != null)
             {
                 int dir = 0;
-                if (kb.leftShiftKey.wasPressedThisFrame) dir += 1;   // bieg w górę (cięższy)
-                if (kb.leftCtrlKey.wasPressedThisFrame) dir -= 1;    // bieg w dół (lżejszy)
-                if (dir != 0)
-                {
-                    if (leftHeld) pedals.ShiftFront(dir);
-                    else pedals.ShiftRear(dir);
-                }
+                if (kb.leftShiftKey.wasPressedThisFrame) dir += 1;
+                if (kb.leftCtrlKey.wasPressedThisFrame) dir -= 1;
+                if (dir != 0) pedals.Shift(dir);
             }
         }
 
@@ -731,7 +718,7 @@ public class BikeController : MonoBehaviour
         hasSafe = false;
         groundedTime = 0f;
         slip = gripLoad = 0f;
-        FrontBrake = RearBrake = false;
+        Braking = false;
         lastForward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
         rb.position = startPosition;
         rb.rotation = Quaternion.Euler(0f, yaw, 0f);

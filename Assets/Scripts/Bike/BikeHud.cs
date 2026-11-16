@@ -1,9 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// HUD (IMGUI): prędkość i kierownica w rogu, na dole panele biegów (lewy 1–3, prawy 1–7) ze słupkami
-/// "ile da pedałowanie w tym biegu przy obecnej prędkości". Wskaźniki pedałowania (rytm, zmęczenie)
-/// są po bokach ekranu, w wizji peryferyjnej – patrz RhythmHud.
+/// HUD (IMGUI): prędkość, kierownica, hamulec i teksty pomocy. Wskaźniki rytmu, biegów i zmęczenia
+/// są na krawędziach ekranu, w wizji peryferyjnej – patrz RhythmHud.
 /// </summary>
 public class BikeHud : MonoBehaviour
 {
@@ -34,14 +33,13 @@ public class BikeHud : MonoBehaviour
             Label(new Rect(Screen.width * 0.5f - 300f, u, 600f, u * 1.4f),
                 $"POCIĄG  {train.SpeedKmh:0} km/h   •   {train.DistanceTo(bike.transform.position):0} m od Ciebie   •   do końca mostu {(mission != null ? mission.DistanceToBridgeEnd : train.RemainingDistance):0} m",
                 u * 0.9f, Gold, TextAnchor.MiddleCenter, FontStyle.Bold);
-        if (pedals != null) DrawBottom(u);
         if (bike.Fallen) DrawFallen(u);
 
-        Label(new Rect(u * 2.3f, Screen.height - u * 2.6f, Screen.width - u * 4.6f, u * 1.2f),
-            "A / D – pedałuj w takt (klikaj naprzemiennie, gdy pasek z boku zejdzie do środka – cyjan = idealnie)  |  LPM na uchwycie – kierowanie  |  S – cofanie (na postoju)  |  po upadku: przytrzymaj Spację  |  R – restart misji",
+        Label(new Rect(u * 2.3f, Screen.height - u * 4.4f, Screen.width - u * 4.6f, u * 1.0f),
+            "A / D – pedałuj w takt (klikaj naprzemiennie, gdy pasek z boku zejdzie do środka – cyjan = idealnie)  |  Shift / Ctrl – bieg cięższy / lżejszy (trzymaj wskaźnik w zielonym)",
             u * 0.7f, Dim, TextAnchor.MiddleLeft);
-        Label(new Rect(u * 2.3f, Screen.height - u * 1.5f, Screen.width - u * 4.6f, u * 1.2f),
-            "Na trzymanym uchwycie:  Spacja – hamulec (lewy = przód, prawy = tył)  |  Shift / Ctrl – bieg wyżej / niżej (lewy 1–3, prawy 1–7)",
+        Label(new Rect(u * 2.3f, Screen.height - u * 3.5f, Screen.width - u * 4.6f, u * 1.0f),
+            "LPM na uchwycie – kierowanie  |  Spacja – hamulec  |  S – cofanie (na postoju)  |  po upadku: przytrzymaj Spację  |  R – restart misji",
             u * 0.7f, Dim, TextAnchor.MiddleLeft);
     }
 
@@ -55,16 +53,14 @@ public class BikeHud : MonoBehaviour
 
         if (steering != null)
         {
-            string state = steering.IsGrabbed ? (steering.LeftHeld ? "lewy uchwyt" : "prawy uchwyt") : "puszczona";
+            string state = steering.IsGrabbed ? "trzymana" : "puszczona";
             Label(new Rect(u * 2.3f, y, 600f, u * 1.2f), $"Kierownica: {steering.Angle:+0;-0;0}° ({state})", u * 0.85f, Color.white, TextAnchor.MiddleLeft);
             y += u * 1.3f;
         }
 
-        if (bike.FrontBrake || bike.RearBrake)
+        if (bike.Braking)
         {
-            string s = bike.FrontBrake && bike.RearBrake ? "HAMULEC: przedni + tylny"
-                     : bike.FrontBrake ? "HAMULEC: przedni (lewy)" : "HAMULEC: tylny (prawy)";
-            Label(new Rect(u * 2.3f, y, 600f, u * 1.2f), s, u * 0.85f, new Color(1f, 0.4f, 0.4f), TextAnchor.MiddleLeft, FontStyle.Bold);
+            Label(new Rect(u * 2.3f, y, 600f, u * 1.2f), "HAMULEC", u * 0.85f, new Color(1f, 0.4f, 0.4f), TextAnchor.MiddleLeft, FontStyle.Bold);
             y += u * 1.3f;
         }
 
@@ -111,74 +107,6 @@ public class BikeHud : MonoBehaviour
         Fill(bar, Panel);
         Fill(new Rect(bar.x, bar.y, bar.width * bike.StandProgress, bar.height), Green);
         Frame(bar, 1f, Dim);
-    }
-
-    // ------------------------------------------------------------ dół ekranu
-
-    void DrawBottom(float u)
-    {
-        float cx = Screen.width * 0.5f;
-        float gap = u * 0.6f;
-        float bottom = Screen.height - u * 3.4f;
-        float v = bike.Speed;
-
-        // Ile da pedałowanie w każdym z biegów przy obecnej prędkości (przyspieszenie od napędu).
-        int fc = pedals.FrontGearCount, rc = pedals.RearGearCount;
-        var front = new float[fc];
-        var rear = new float[rc];
-        float max = 1e-4f;
-        for (int f = 0; f < fc; f++)
-            for (int r = 0; r < rc; r++)
-                max = Mathf.Max(max, pedals.DriveAccelerationAt(pedals.RatioAt(f, r), v));
-        for (int f = 0; f < fc; f++)
-            front[f] = pedals.DriveAccelerationAt(pedals.RatioAt(f, pedals.RearIndex), v) / max;
-        for (int r = 0; r < rc; r++)
-            rear[r] = pedals.DriveAccelerationAt(pedals.RatioAt(pedals.FrontIndex, r), v) / max;
-
-        float panelH = u * 4.2f;
-        float frontW = PanelWidth(u, fc);
-        float rearW = PanelWidth(u, rc);
-        var frontRect = new Rect(cx - gap - frontW, bottom - panelH, frontW, panelH);
-        var rearRect = new Rect(cx + gap, bottom - panelH, rearW, panelH);
-
-        DrawGearPanel(frontRect, "LEWA · przód", steering != null && steering.LeftHeld, pedals.FrontIndex, front, u);
-        DrawGearPanel(rearRect, "PRAWA · tył", steering != null && steering.RightHeld, pedals.RearIndex, rear, u);
-    }
-
-    static float PanelWidth(float u, int count) => u * (1f + count * 1.3f + (count - 1) * 0.35f);
-
-    void DrawGearPanel(Rect r, string title, bool held, int current, float[] values, float u)
-    {
-        Fill(r, Panel);
-        Frame(r, held ? 2f : 1f, held ? Gold : new Color(1f, 1f, 1f, 0.2f));
-
-        // Tytuł; gdy ręka jest na tym uchwycie, zamienia się w podpowiedź klawiszy.
-        Label(new Rect(r.x, r.y + u * 0.15f, r.width, u * 0.9f),
-            held ? "Shift ▲   Ctrl ▼" : title, u * 0.7f, held ? Gold : Dim, TextAnchor.MiddleCenter, held ? FontStyle.Bold : FontStyle.Normal);
-
-        float pipW = u * 1.3f, pipGap = u * 0.35f;
-        float areaH = u * 2.0f;
-        float top = r.y + u * 1.1f;
-        float baseY = top + areaH;
-        float x = r.x + u * 0.5f;
-
-        for (int i = 0; i < values.Length; i++)
-        {
-            Fill(new Rect(x, top, pipW, areaH), new Color(1f, 1f, 1f, 0.07f));
-
-            // Sześcian zwiększa kontrast: różnice między biegami są wyraźniejsze, gdy wszystkie są "niezłe".
-            float val = Mathf.Pow(Mathf.Clamp01(values[i]), 3f);
-            float h = Mathf.Lerp(u * 0.12f, areaH, val);
-            Fill(new Rect(x, baseY - h, pipW, h), Color.Lerp(new Color(0.35f, 0.35f, 0.38f), Green, val));
-
-            bool cur = i == current;
-            if (cur) Frame(new Rect(x - 2f, top - 2f, pipW + 4f, areaH + 4f), 2f, Color.white);
-
-            Label(new Rect(x - pipGap, baseY + u * 0.1f, pipW + pipGap * 2f, u * 0.9f),
-                (i + 1).ToString(), u * 0.8f, cur ? Color.white : Dim, TextAnchor.MiddleCenter, cur ? FontStyle.Bold : FontStyle.Normal);
-
-            x += pipW + pipGap;
-        }
     }
 
     // ------------------------------------------------------------ rysowanie

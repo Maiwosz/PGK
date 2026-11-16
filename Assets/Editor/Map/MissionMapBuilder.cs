@@ -237,7 +237,16 @@ public static class MissionMapBuilder
         mesh.CombineMeshes(parts, false, false);
         mesh.RecalculateBounds();
         string path = $"{GenDir}/Meshes/{name}.asset";
-        AssetDatabase.DeleteAsset(path);
+        // Nadpisujemy zawartość istniejącego assetu zamiast go kasować i tworzyć od nowa: wtedy referencje do mesha
+        // (GUID i obiekt w pamięci edytora) pozostają ważne, a instancje toru nie tracą siatki.
+        var existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+        if (existing != null)
+        {
+            EditorUtility.CopySerialized(mesh, existing);
+            Object.DestroyImmediate(mesh);
+            EditorUtility.SetDirty(existing);
+            return existing;
+        }
         AssetDatabase.CreateAsset(mesh, path);
         return mesh;
     }

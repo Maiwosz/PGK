@@ -11,11 +11,18 @@ using UnityEngine.InputSystem;
 ///   session_*_events.csv   – zdarzenia (początek/koniec skoku, błędy, zmiany biegów, markery),
 ///   session_*_summary.txt  – podsumowanie liczone po wyjściu z Play mode.
 /// F9 wstawia marker w pliku zdarzeń (np. "tu było za ciężko").
-/// Tworzy się automatycznie, gdy w scenie jest BikeController. Aby wyłączyć, ustaw Enabled = false.
+/// Tworzy się automatycznie, gdy w scenie jest BikeController. Włączanie i wyłączanie: menu Tools/Telemetry/Recording (zmiana działa od następnego Play); gdy wyłączone, nic się nie zapisuje i nie ma napisu REC.
 /// </summary>
 public class BikeTelemetry : MonoBehaviour
 {
-    public static bool Enabled = true;
+    const string PrefKey = "PGK_TelemetryRecording";
+
+    /// <summary>Czy nagrywać telemetrię (zapamiętywane między sesjami). W edytorze: Tools/Telemetry/Recording. Domyślnie włączone.</summary>
+    public static bool Enabled
+    {
+        get => PlayerPrefs.GetInt(PrefKey, 1) != 0;
+        set { PlayerPrefs.SetInt(PrefKey, value ? 1 : 0); PlayerPrefs.Save(); }
+    }
 
     const float SampleInterval = 0.1f;
     const float RidingWindow = 1.0f;    // jak długo po ostatnim pchnięciu uznajemy, że "pedałujemy"
@@ -78,7 +85,7 @@ public class BikeTelemetry : MonoBehaviour
         samples = new StreamWriter(basePath + "_samples.csv", false, new UTF8Encoding(false));
         events = new StreamWriter(basePath + "_events.csv", false, new UTF8Encoding(false));
         samples.WriteLine("t,speed_kmh,gear_f,gear_r,ratio,cadence_rpm,power_frac,stamina,stamina_trend,pedal_factor," +
-                          "pushing,key_foot,progress,judge,streak,brake_f,brake_r,steer_deg,x,z");
+                          "pushing,key_foot,progress,judge,streak,gear,brake,steer_deg,x,z");
         events.WriteLine("t,event,speed_kmh,gear_f,gear_r,stamina");
 
         t0 = Time.time;
@@ -163,7 +170,7 @@ public class BikeTelemetry : MonoBehaviour
                 pedals.Pushing ? "1" : "0", ((int)pedals.ActiveFoot).ToString(Inv),
                 F(pedals.Progress, "0.00"),
                 ((int)pedals.LastJudgement).ToString(Inv), pedals.HitStreak.ToString(Inv),
-                bike.FrontBrake ? "1" : "0", bike.RearBrake ? "1" : "0",
+                pedals.GearNumber.ToString(Inv), bike.Braking ? "1" : "0",
                 F(steering != null ? steering.Angle : 0f, "0"), F(p.x, "0.0"), F(p.z, "0.0")));
         }
 
@@ -253,7 +260,7 @@ public class BikeTelemetry : MonoBehaviour
              $"za wcześnie {early}, za późno {late}; odrzucone: klepanie {C("judge_mash")}, zła noga {C("judge_wrongfoot")}");
         Line($"starty rytmu {C("judge_start")}, zerwania rytmu {C("rhythm_lost")}, najdłuższa seria trafień {bestStreak}, " +
              $"średni błąd {(errN > 0 ? errAbsSum / errN * 1000f : 0f):0} ms (n={errN})");
-        Line($"zmiany biegów: przód {C("shift_front")} (zablokowane {C("shift_front_blocked")}), tył {C("shift_rear")} (zablokowane {C("shift_rear_blocked")})");
+        Line($"zmiany biegów: {C("shift")} (zablokowane {C("shift_blocked")})");
         Line($"markery F9: {C("MARKER")}");
         Line();
 

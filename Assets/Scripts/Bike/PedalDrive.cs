@@ -24,14 +24,14 @@ public class PedalDrive : MonoBehaviour
     [SerializeField] Key leftKey = Key.A;
     [SerializeField] Key rightKey = Key.D;
 
-    [Header("Przerzutki 3 x 7")]
-    [Tooltip("Liczba zębów tarcz z przodu: bieg 1 = najmniejsza (najlżejsza).")]
+    [Header("Biegi (3 x 7 = 21 kombinacji w jednej kolejności od najlżejszej do najcięższej)")]
+    [Tooltip("Liczba zębów tarcz z przodu.")]
     [SerializeField] int[] chainrings = { 28, 38, 48 };
-    [Tooltip("Liczba zębów zębatek kasety z tyłu: bieg 1 = największa (najlżejsza).")]
+    [Tooltip("Liczba zębów zębatek kasety z tyłu.")]
     [SerializeField] int[] cogs = { 32, 28, 24, 21, 18, 16, 14 };
-    [Tooltip("Startowy bieg przedni i tylny (numeracja od 1).")]
-    [SerializeField] int startFrontGear = 2;
-    [SerializeField] int startRearGear = 3;
+    [Tooltip("Rower startuje (i wstaje po upadku) na biegu optymalnym dla tej prędkości (m/s) – typowej dla ruszania. " +
+             "Ta sama prędkość służy pasku biegów na postoju, żeby optimum było widać od startu.")]
+    [SerializeField, Range(1.5f, 8f)] float startOptimumSpeed = 3f;
 
     [Header("Rowerzysta")]
     [SerializeField] float wheelRadius = 0.34f;
@@ -83,18 +83,18 @@ public class PedalDrive : MonoBehaviour
     [Tooltip("Poziom wybiegu po ukończonym skoku (profil siły: średnia skoku = 1, szczyt ok. 1,57), mnożony przez jakość skoku.")]
     [SerializeField] float tailFloor = 0.5f;
 
-    [Header("Wytrzymałość (stamina)")]
-    [Tooltip("Wydajność (ułamek szczytowej mocy przy danej kadencji), od której nie męczysz się, a powyżej której odpoczywasz. " +
-             "To ta sama zielona strefa, którą pokazuje pasek kadencji w HUD.")]
-    [SerializeField, Range(0.5f, 0.99f)] float sweetPowerFraction = 0.85f;
-    [Tooltip("Regeneracja na sekundę przy pedałowaniu w samym środku strefy (wydajność 100%).")]
+    [Header("Optimum biegu")]
+    [Tooltip("Wydajność (ułamek szczytowej mocy przy danej kadencji), od której bieg uznajemy za optymalny (zielony na pasku biegów). " +
+             "Bieg nie wpływa na zmęczenie, tylko na moc napędu.")]
+    [SerializeField, Range(0.5f, 0.99f)] float sweetPowerFraction = 0.95f;
+
+    [Header("Wytrzymałość (stamina) – zależy tylko od rytmu")]
+    [Tooltip("Regeneracja na sekundę podczas serii dobrych trafień (idealnych lub w oknie łaski).")]
     [SerializeField] float staminaRegen = 0.05f;
+    [Tooltip("Ile kolejnych dobrych trafień trzeba, żeby zaczęła się regeneracja.")]
+    [SerializeField] int regenStreak = 3;
     [Tooltip("Regeneracja na sekundę, gdy nie pedałujesz (koasting, postój).")]
     [SerializeField] float staminaCoastRegen = 0.03f;
-    [Tooltip("Ubytek na sekundę przy wydajności 0% (np. kręcenie na pusto albo ruszanie na najcięższym biegu).")]
-    [SerializeField] float staminaDrain = 0.12f;
-    [Tooltip("Im większy wykładnik, tym łagodniej karany jest bieg tylko trochę poza strefą.")]
-    [SerializeField] float drainExponent = 1.5f;
     [Tooltip("Poniżej tego poziomu stamina zaczyna spowalniać pedałowanie.")]
     [SerializeField, Range(0.05f, 1f)] float penaltyStartStamina = 0.5f;
     [Tooltip("Mnożnik szybkości pedałowania (i siły) przy pustej staminie.")]
@@ -117,6 +117,8 @@ public class PedalDrive : MonoBehaviour
     float lastEffortTime = float.NegativeInfinity;
     int frontIndex;
     int rearIndex;
+    int[] order;                   // kombinacje biegów (tarcza * 100 + zębatka) posortowane od najlżejszej do najcięższej
+    int gearPos;
 
     /// <summary>Aktualna prędkość roweru (m/s) – ustawia BikeController.</summary>
     public float Speed { get; set; }
@@ -154,17 +156,31 @@ public class PedalDrive : MonoBehaviour
     /// <summary>Każda ocena kliknięcia: noga, ocena, błąd w sekundach (ujemny = za wcześnie), mnożnik mocy skoku.</summary>
     public event System.Action<Foot, Judgement, float, float> Judged;
 
+    /// <summary>Tarcza (1..) i zębatka (1..) aktualnego biegu – do telemetrii.</summary>
     public int FrontGear => frontIndex + 1;
-    public int FrontGearCount => chainrings.Length;
     public int RearGear => rearIndex + 1;
-    public int RearGearCount => cogs.Length;
+    /// <summary>Liczba biegów w jednej kolejności (od najlżejszego do najcięższego).</summary>
+    public int GearCount => order != null ? order.Length : chainrings.Length * cogs.Length;
+    /// <summary>Miejsce aktualnego biegu w kolejności: 0 = najlżejszy.</summary>
+    public int GearPosition => gearPos;
+    /// <summary>Numer biegu od 1 (1 = najlżejszy).</summary>
+    public int GearNumber => gearPos + 1;
     /// <summary>Obroty koła na jeden obrót korby (większe = cięższy bieg).</summary>
-    public float GearRatio => (float)chainrings[frontIndex] / cogs[rearIndex];
-
-    public int FrontIndex => frontIndex;
-    public int RearIndex => rearIndex;
-    /// <summary>Przełożenie dla dowolnej kombinacji biegów (indeksy od 0), np. do wizualizacji w HUD.</summary>
-    public float RatioAt(int front, int rear) => (float)chainrings[front] / cogs[rear];
+    public float GearRatio => RatioAtPosition(gearPos);
+    /// <summary>Przełożenie biegu o danym miejscu w kolejności (0 = najlżejszy).</summary>
+    public float RatioAtPosition(int pos)
+    {
+        int code = order[Mathf.Clamp(pos, 0, order.Length - 1)];
+        return (float)chainrings[code / 100] / cogs[code % 100];
+    }
+    /// <summary>Wydajność pedałowania 0..1 na biegu o danym miejscu przy prędkości v.</summary>
+    public float EfficiencyAtPosition(int pos, float v)
+    {
+        float x = Mathf.Clamp01(OmegaFor(RatioAtPosition(pos), v) / maxCrankOmega);
+        return 4f * x * (1f - x);
+    }
+    /// <summary>Próg wydajności, od którego bieg jest optymalny (zielony).</summary>
+    public float OptimumThreshold => sweetPowerFraction;
 
     float OmegaFor(float ratio, float v) => Mathf.Max(v, minEffectiveSpeed) / (ratio * wheelRadius);
     float CrankOmega(float v) => OmegaFor(GearRatio, v);
@@ -215,24 +231,48 @@ public class PedalDrive : MonoBehaviour
 
     void Awake()
     {
-        frontIndex = Mathf.Clamp(startFrontGear - 1, 0, chainrings.Length - 1);
-        rearIndex = Mathf.Clamp(startRearGear - 1, 0, cogs.Length - 1);
+        // Wszystkie kombinacje tarcza x zębatka w jednej kolejności od najlżejszej do najcięższej.
+        var codes = new System.Collections.Generic.List<int>();
+        for (int f = 0; f < chainrings.Length; f++)
+            for (int r = 0; r < cogs.Length; r++)
+                codes.Add(f * 100 + r);
+        codes.Sort((a, b) => ((float)chainrings[a / 100] / cogs[a % 100]).CompareTo((float)chainrings[b / 100] / cogs[b % 100]));
+        order = codes.ToArray();
+
+        SelectStartGear();
     }
 
-    /// <summary>Lewa manetka (przerzutka przednia, 1–3). direction: +1 wyżej, -1 niżej.</summary>
-    public void ShiftFront(int direction)
+    /// <summary>Prędkość, względem której oceniamy biegi: na postoju i przy ruszaniu bierzemy prędkość startową.</summary>
+    public float GearReferenceSpeed(float v) => Mathf.Max(v, startOptimumSpeed);
+
+    /// <summary>Ustawia bieg o największej wydajności przy prędkości startowej.</summary>
+    void SelectStartGear()
     {
-        int before = frontIndex;
-        frontIndex = Mathf.Clamp(frontIndex + direction, 0, chainrings.Length - 1);
-        Emit(frontIndex == before ? $"shift_front_blocked {FrontGear}" : $"shift_front {before + 1}->{FrontGear}");
+        if (order == null) return;
+        int best = 0;
+        float bestEff = -1f;
+        for (int i = 0; i < order.Length; i++)
+        {
+            float e = EfficiencyAtPosition(i, startOptimumSpeed);
+            if (e > bestEff + 1e-4f) { bestEff = e; best = i; }
+        }
+        gearPos = best;
+        ApplyGear();
     }
 
-    /// <summary>Prawa manetka (przerzutka tylna, 1–7). direction: +1 wyżej, -1 niżej.</summary>
-    public void ShiftRear(int direction)
+    void ApplyGear()
     {
-        int before = rearIndex;
-        rearIndex = Mathf.Clamp(rearIndex + direction, 0, cogs.Length - 1);
-        Emit(rearIndex == before ? $"shift_rear_blocked {RearGear}" : $"shift_rear {before + 1}->{RearGear}");
+        frontIndex = order[gearPos] / 100;
+        rearIndex = order[gearPos] % 100;
+    }
+
+    /// <summary>Zmiana biegu o jedno miejsce: +1 cięższy, -1 lżejszy.</summary>
+    public void Shift(int direction)
+    {
+        int before = gearPos;
+        gearPos = Mathf.Clamp(gearPos + direction, 0, order.Length - 1);
+        ApplyGear();
+        Emit(gearPos == before ? $"shift_blocked {GearNumber}" : $"shift {before + 1}->{GearNumber}");
     }
 
     /// <summary>Zdarzenia pedałowania dla telemetrii (np. "begin L", "complete", "release_early p=0.42").</summary>
@@ -273,6 +313,7 @@ public class PedalDrive : MonoBehaviour
 
     public void ResetState()
     {
+        SelectStartGear();
         last = Foot.None;
         inRhythm = false;
         tailLevel = 0f;
@@ -453,28 +494,18 @@ public class PedalDrive : MonoBehaviour
     }
 
     /// <summary>
-    /// Stamina zależy od wydajności pedałowania przy obecnej kadencji: w zielonej strefie (>= sweetPowerFraction)
-    /// się nie męczysz, a im bliżej środka strefy, tym szybciej odpoczywasz. Poza strefą ubywa ci sił,
-    /// tym szybciej, im dalej od niej. Gdy nie pedałujesz, regenerujesz się powoli niezależnie od biegu.
-    /// Dodatkowo kosztują siły błędy rytmu (patrz Tap/Fail).
+    /// Stamina zależy tylko od rytmu: błędy kosztują siły (Tap/Fail), seria dobrych trafień pozwala odpoczywać,
+    /// a bez pedałowania regenerujesz się powoli. Bieg wpływa wyłącznie na moc napędu.
     /// </summary>
     void UpdateStamina(float dt)
     {
         if (Pushing || inRhythm)
             lastEffortTime = Time.time;
 
-        float trend;
-        if (Time.time - lastEffortTime > 0.5f)
-        {
-            trend = staminaCoastRegen;
-        }
-        else
-        {
-            float e = PowerFraction(Speed);
-            trend = e >= sweetPowerFraction
-                ? staminaRegen * (e - sweetPowerFraction) / (1f - sweetPowerFraction)
-                : -staminaDrain * Mathf.Pow((sweetPowerFraction - e) / sweetPowerFraction, drainExponent);
-        }
+        // Odpoczywasz podczas serii dobrych trafień albo gdy nie pedałujesz; błędy rytmu męczą (patrz Tap/Fail).
+        float trend = 0f;
+        if (Time.time - lastEffortTime > 0.5f) trend = staminaCoastRegen;
+        else if (inRhythm && HitStreak >= regenStreak) trend = staminaRegen;
 
         StaminaTrend = trend;
         stamina = Mathf.Clamp01(stamina + trend * dt);
