@@ -15,9 +15,7 @@ public static class MissionMapBuilder
     const string RecipeDir = "Assets/Mission/Recipe";
     internal const string GenDir = "Assets/Mission/Generated";
     const string MatDir = "Assets/Materials/Mission";
-    const string ScenePath = "Assets/Scenes/MissionMap.unity";
-    const string BikePrefabPath = "Assets/Prefabs/Bike.prefab";
-    const string GunPrefabPath = "Assets/Prefabs/Gun.prefab";
+    internal const string MapPrefabPath = GenDir + "/Resources/MissionMap.prefab";
 
     const float SegmentLength = 4f;
 
@@ -35,28 +33,63 @@ public static class MissionMapBuilder
     class Mats { public Material TrainLoco, TrainStripe, TrainDark, TrainRoof; public Material[] TrainWagons; public Material BridgeSteel, Ballast, Sleeper, Steel, Concrete, TunnelConcrete, Fence, Station, Water; public Material[] Building; }
 
     [MenuItem("Tools/Mission/Build Map")]
-    public static void BuildAll()
+    /// <summary>
+    /// Buduje mapę z przepisu i zapisuje ją jako prefab Resources/MissionMap. Nie rusza żadnej sceny gry:
+    /// obiekty powstają w tymczasowej scenie (osobno, bo ścieżkę toru dopasowujemy do kolizji przez Physics).
+    /// </summary>
+    public static bool BuildAll()
     {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            Debug.LogError("[MissionMapBuilder] Zatrzymaj tryb Play przed budową mapy.");
+            return false;
+        }
+
+        // Podgląd mapy w otwartych scenach też ma kolidery – na czas budowy go zdejmujemy.
+        MissionMapEditorHooks.RemovePreviews();
+
         EnsureFolder(GenDir);
         EnsureFolder(GenDir + "/Terrain");
         EnsureFolder(GenDir + "/Meshes");
         EnsureFolder(GenDir + "/Prefabs");
         EnsureFolder(GenDir + "/Textures");
+        EnsureFolder(GenDir + "/Resources");
         EnsureFolder(MatDir);
 
         var route = JsonUtility.FromJson<RouteData>(File.ReadAllText(RecipeDir + "/route.json"));
         var meta = JsonUtility.FromJson<TerrainMeta>(File.ReadAllText(RecipeDir + "/terrain.json"));
 
+        Scene previousActive = SceneManager.GetActiveScene();
+        Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+        SceneManager.SetActiveScene(scene);
+        try
+        {
+            BuildInto(scene, route, meta);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError("[MissionMapBuilder] Budowa mapy nie powiodła się: " + e);
+            return false;
+        }
+        finally
+        {
+            if (previousActive.IsValid()) SceneManager.SetActiveScene(previousActive);
+            EditorSceneManager.CloseScene(scene, true);
+            MissionMapEditorHooks.RefreshPreviews();
+        }
+        MissionMapAutoBuild.WriteStamp();
+        Debug.Log($"[MissionMapBuilder] Gotowe: {MapPrefabPath} (tor {route.lengthM / 1000f:0.00} km)");
+        return true;
+    }
+
+    static void BuildInto(Scene scene, RouteData route, TerrainMeta meta)
+    {
         Mats mats = CreateMaterials();
         GameObject rail = CreateRailPrefab(mats);
         GameObject deck = CreateBridgePrefab(mats);
         GameObject tunnel = CreateTunnelPrefab(mats);
         Terrain[] terrains = null;
         TerrainData[] terrainData = CreateTerrainData(meta, route);
-
-        Scene scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
-        foreach (var cam in Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
-            Object.DestroyImmediate(cam.gameObject);
 
         terrains = CreateTerrains(meta, terrainData);
 
@@ -97,54 +130,20 @@ public static class MissionMapBuilder
         SnapPathToCollision(path, gtaTracks, deck, CreateSupportFloorPrefab(mats));
         gen.Generate();
 
-        // Pociąg.
-        CreateTrain(path, mats);
-
-        // Rower na starcie, obok toru.
-        // Prefab roweru bywa trzymany w pamięci edytora ze starymi wartościami pól (np. po zmianie domyślnych w kodzie).
-        AssetDatabase.ImportAsset(BikePrefabPath, ImportAssetOptions.ForceUpdate);
-        var bikePrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BikePrefabPath);
-        if (bikePrefab == null)
-        {
-            Debug.LogError("Brak prefabu roweru – uruchom najpierw Tools/Bike/Build Prototype.");
-        }
-        else
-        {
-            Vector3 fwd = (pts[Mathf.Min(6, n - 1)] - pts[0]);
-            fwd.y = 0f;
-            fwd.Normalize();
-            Vector3 right = Vector3.Cross(Vector3.up, fwd);
-            Vector3 start = pts[0] + right * 3.2f;
-            start.y = TerrainHeight(terrains, start) + 0.3f;
-
-            var bike = (GameObject)PrefabUtility.InstantiatePrefab(bikePrefab);
-            bike.transform.SetPositionAndRotation(start, Quaternion.LookRotation(fwd, Vector3.up));
-            foreach (var cam in bike.GetComponentsInChildren<Camera>()) cam.farClipPlane = 3000f;
-
-            var hud = new GameObject("HUD").AddComponent<BikeHud>();
-            SetRef(hud, "bike", bike.GetComponent<BikeController>());
-            SetRef(hud, "pedals", bike.GetComponentInChildren<PedalDrive>());
-            SetRef(hud, "steering", bike.GetComponentInChildren<HandlebarSteering>());
-
-            // Broń ręczna gracza (sama przypina się do GunHoldPoint roweru).
-            CreateGun(bike);
-
-            // Rozgrywka: gangsterzy na pierwszym wagonie, wieżyczka, menedżer misji i HUD misji.
-            MissionGameplayBuilder.Apply();
-        }
-
-        EditorSceneManager.SaveScene(scene, ScenePath);
-        var list = new List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
-        if (!list.Exists(s => s.path == ScenePath)) list.Add(new EditorBuildSettingsScene(ScenePath, true));
-        EditorBuildSettings.scenes = list.ToArray();
+        // Całość pod jednym korzeniem -> prefab Resources/MissionMap (scena tymczasowa zostanie zamknięta).
+        var root = new GameObject("MissionMap");
+        foreach (var go in scene.GetRootGameObjects())
+            if (go != root) go.transform.SetParent(root.transform, true);
 
         AssetDatabase.SaveAssets();
+        PrefabUtility.SaveAsPrefabAsset(root, MapPrefabPath);
+        Object.DestroyImmediate(root);
+
         // Po wielokrotnym nadpisywaniu meshy i prefabów edytor potrafi trzymać w pamięci stare, puste referencje
-        // (tory bez meshy). Wymuszamy reimport wygenerowanych assetów i wczytujemy scenę z dysku.
+        // (tory bez meshy). Wymuszamy reimport wygenerowanych assetów.
         AssetDatabase.ImportAsset(GenDir + "/Meshes", ImportAssetOptions.ForceUpdate | ImportAssetOptions.ImportRecursive);
         AssetDatabase.ImportAsset(GenDir + "/Prefabs", ImportAssetOptions.ForceUpdate | ImportAssetOptions.ImportRecursive);
-        EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
-        Debug.Log($"[MissionMapBuilder] Gotowe: {ScenePath} (tor {route.lengthM / 1000f:0.00} km)");
+        AssetDatabase.ImportAsset(MapPrefabPath, ImportAssetOptions.ForceUpdate);
     }
 
     // ---------------------------------------------------------------- materiały
@@ -464,17 +463,6 @@ public static class MissionMapBuilder
             terrains[t] = terrain;
         }
         return terrains;
-    }
-
-    static float TerrainHeight(Terrain[] terrains, Vector3 p)
-    {
-        foreach (var t in terrains)
-        {
-            Vector3 o = t.transform.position;
-            if (p.x >= o.x && p.x <= o.x + t.terrainData.size.x && p.z >= o.z && p.z <= o.z + t.terrainData.size.z)
-                return t.SampleHeight(p) + o.y;
-        }
-        return p.y;
     }
 
     // ---------------------------------------------------------------- wariant "GTA": siatki kolizji z gry
@@ -835,215 +823,6 @@ public static class MissionMapBuilder
             if (kind == 2) floors++; else bridges++;
         }
         Debug.Log($"[MissionMapBuilder] Podparcie: płyty mostu {bridges}, podłoga tunelu {floors}");
-    }
-
-    // ---------------------------------------------------------------- portale tunelu
-
-    /// <summary>Ściana czołowa (betonowa) na obu końcach każdego tunelu – zasłania krawędź nasypu nad obudową.</summary>
-    static void BuildTunnelPortals(TrackPath path, Mats m)
-    {
-        var root = new GameObject("TunnelPortals");
-        int n = path.Count;
-        float spacing = path.Length / Mathf.Max(1, n - 1);
-        int step = Mathf.Max(1, Mathf.RoundToInt(SegmentLength / Mathf.Max(0.1f, spacing)));
-        int count = 0;
-        for (int i = 0; i < n; i++)
-        {
-            bool isTunnel = path.KindAt(i) == TrackPath.Kind.Tunnel;
-            bool prevTunnel = i > 0 && path.KindAt(i - 1) == TrackPath.Kind.Tunnel;
-            bool nextTunnel = i < n - 1 && path.KindAt(i + 1) == TrackPath.Kind.Tunnel;
-            // granice odcinków generatora: segmenty zaczynają się od indeksów 0, step, 2*step... i są tunelowe, gdy zawierają punkt tunelu
-            int boundary;
-            float inward;
-            if (isTunnel && !prevTunnel) { boundary = (i % step == 0) ? i - step : i - (i % step); inward = 1f; }
-            else if (isTunnel && !nextTunnel) { boundary = (i % step == 0) ? i + step : i - (i % step) + step; inward = -1f; }
-            else continue;
-            boundary = Mathf.Clamp(boundary, 0, n - 1);
-            Vector3 p = path.PointAt(boundary);
-            Vector3 d = path.PointAt(Mathf.Min(n - 1, boundary + 1)) - path.PointAt(Mathf.Max(0, boundary - 1));
-            if (d.sqrMagnitude < 1e-4f) continue;
-            d *= inward;
-            var portal = new GameObject("Portal" + (++count));
-            portal.transform.SetParent(root.transform, false);
-            portal.transform.SetPositionAndRotation(p, Quaternion.LookRotation(d.normalized, Vector3.up));
-            Prim(PrimitiveType.Cube, "Left", portal.transform, new Vector3(-6.3f, 4.75f, 0f), new Vector3(5.4f, 10.5f, 2.4f), m.TunnelConcrete, true);
-            Prim(PrimitiveType.Cube, "Right", portal.transform, new Vector3(6.3f, 4.75f, 0f), new Vector3(5.4f, 10.5f, 2.4f), m.TunnelConcrete, true);
-            Prim(PrimitiveType.Cube, "Lintel", portal.transform, new Vector3(0f, 8.0f, 0f), new Vector3(7.2f, 4.0f, 2.4f), m.TunnelConcrete, true);
-            Prim(PrimitiveType.Cube, "Cap", portal.transform, new Vector3(0f, 8.2f, 5.0f), new Vector3(13f, 3.6f, 10f), m.TunnelConcrete, true);
-            foreach (var r in portal.GetComponentsInChildren<Renderer>()) r.gameObject.isStatic = true;
-        }
-    }
-
-    // ---------------------------------------------------------------- broń
-
-    /// <summary>
-    /// Wstawia prefab broni z ustawieniami misji. Położenie w scenie nie ma znaczenia – w Start broń sama
-    /// przypina się do GunHoldPoint roweru, a MissionManager znajduje ją do statystyk.
-    /// </summary>
-    static void CreateGun(GameObject bike)
-    {
-        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(GunPrefabPath);
-        if (prefab == null) { Debug.LogWarning($"[MissionMapBuilder] Brak prefabu broni ({GunPrefabPath}) – pomijam broń."); return; }
-
-        var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-        go.name = "Gun";
-        go.transform.SetPositionAndRotation(bike.transform.position, bike.transform.rotation);
-
-        var so = new SerializedObject(go.GetComponent<Gun>());
-        so.FindProperty("aimReference").enumValueIndex = (int)Gun.AimReference.ScreenCenter;
-        so.FindProperty("maxYaw").floatValue = 120f;
-        so.FindProperty("maxPitch").floatValue = 120f;
-        so.FindProperty("rotateCamera").boolValue = true;
-        so.FindProperty("cameraAimFactor").floatValue = 0.4f;
-        so.FindProperty("shotVolume").floatValue = 1f;
-        so.FindProperty("showShotLine").boolValue = true;
-        so.FindProperty("bulletSpeed").floatValue = 200f;
-        so.FindProperty("bulletDamage").floatValue = 7f;
-        so.FindProperty("shotLineWidth").floatValue = 0.08f;
-        so.FindProperty("shotLineLength").floatValue = 20f;
-        so.ApplyModifiedPropertiesWithoutUndo();
-    }
-
-    // ---------------------------------------------------------------- pociąg
-
-    static void CreateTrain(TrackPath path, Mats m)
-    {
-        GameObject loco = CreateTrainCar("TrainLocomotive", true, m);
-        GameObject wagon = CreateTrainCar("TrainWagon", false, m);
-
-        var go = new GameObject("Train");
-        var train = go.AddComponent<TrainController>();
-        SetRef(train, "path", path);
-        SetRef(train, "locomotivePrefab", loco);
-        SetRef(train, "wagonPrefab", wagon);
-        SetRefs(train, "wagonBodyMaterials", m.TrainWagons);
-    }
-
-    /// <summary>Wagon / lokomotywa z prymitywów: pivot w środku, dołem na szynach, długość 18 m wzdłuż Z.</summary>
-    static GameObject CreateTrainCar(string name, bool locomotive, Mats m)
-    {
-        var root = new GameObject(name);
-        // Podwozie i wózki.
-        Prim(PrimitiveType.Cube, "Floor", root.transform, new Vector3(0f, 1.25f, 0f), new Vector3(2.9f, 0.35f, 18f), m.TrainDark, false);
-        foreach (float z in new[] { -5.5f, 5.5f })
-        {
-            Prim(PrimitiveType.Cube, "Bogie", root.transform, new Vector3(0f, 0.55f, z), new Vector3(2.4f, 0.9f, 3.4f), m.TrainDark, false);
-            Prim(PrimitiveType.Cube, "Wheels", root.transform, new Vector3(0f, 0.45f, z), new Vector3(3.0f, 0.9f, 2.6f), m.TrainDark, false);
-        }
-
-        if (locomotive)
-        {
-            Prim(PrimitiveType.Cube, "Body", root.transform, new Vector3(0f, 2.95f, -1.0f), new Vector3(2.9f, 2.8f, 16f), m.TrainLoco, false);
-            Prim(PrimitiveType.Cube, "Cab", root.transform, new Vector3(0f, 4.75f, 5.2f), new Vector3(2.9f, 1.0f, 5.2f), m.TrainLoco, false);
-            Prim(PrimitiveType.Cube, "Nose", root.transform, new Vector3(0f, 2.75f, 8.35f), new Vector3(2.9f, 2.4f, 1.3f), m.TrainLoco, false);
-            Prim(PrimitiveType.Cube, "Stripe", root.transform, new Vector3(0f, 2.3f, -1.0f), new Vector3(2.96f, 0.35f, 16.05f), m.TrainStripe, false);
-            Prim(PrimitiveType.Cube, "Roof", root.transform, new Vector3(0f, 4.45f, -3.2f), new Vector3(2.7f, 0.2f, 11f), m.TrainRoof, false);
-            Prim(PrimitiveType.Cube, "Light", root.transform, new Vector3(0f, 3.4f, 9.05f), new Vector3(1.2f, 0.4f, 0.1f), m.TrainStripe, false);
-        }
-        else
-        {
-            Prim(PrimitiveType.Cube, "Body", root.transform, new Vector3(0f, 3.0f, 0f), new Vector3(2.9f, 3.2f, 17.6f), m.TrainWagons[0], false);
-            Prim(PrimitiveType.Cube, "Roof", root.transform, new Vector3(0f, 4.7f, 0f), new Vector3(3.0f, 0.2f, 17.8f), m.TrainRoof, false);
-            Prim(PrimitiveType.Cube, "Door", root.transform, new Vector3(1.47f, 2.7f, 0f), new Vector3(0.1f, 2.4f, 3.2f), m.TrainDark, false);
-        }
-
-        // Jedna kolizja na cały wagon, kinematyczne ciało (porusza je TrainController).
-        // Dół sięga 0,6 m poniżej pivotu (pod poziom podsypki), żeby koła roweru nie wślizgiwały się pod wagon.
-        // Wagony mają kolizję wydłużoną do przodu o 1,6 m – zakrywa przerwę (1,2 m) do poprzedniego wagonu
-        // z zapasem na łuki, więc rowerem nie da się przejechać między wagonami. Czoło lokomotywy i tył
-        // ostatniego wagonu zostają bez niewidzialnego przedłużenia.
-        var box = root.AddComponent<BoxCollider>();
-        box.center = new Vector3(0f, 2.2f, locomotive ? 0f : 0.8f);
-        box.size = new Vector3(3.0f, 5.6f, locomotive ? 18f : 19.6f);
-        var rb = root.AddComponent<Rigidbody>();
-        rb.isKinematic = true;
-        rb.interpolation = RigidbodyInterpolation.Interpolate;
-
-        string path = GenDir + "/Prefabs/" + name + ".prefab";
-        var prefab = PrefabUtility.SaveAsPrefabAsset(root, path);
-        Object.DestroyImmediate(root);
-        return prefab;
-    }
-
-    // ---------------------------------------------------------------- łuki mostów
-
-    /// <summary>
-    /// Dla długich odcinków "most" (≥ 150 m) dokłada konstrukcję łukową: dwa parabolicznie wygięte łuki po bokach płyty,
-    /// pionowe wieszaki i filary między przęsłami (jak w Frederick Bridge – most łukowy z jazdą dołem).
-    /// Łuki są tylko wizualne (bez kolizji), żeby nie blokować roweru; filary mają kolizję.
-    /// </summary>
-    static void BuildBridgeArches(TrackPath path, Mats m)
-    {
-        int n = path.Count;
-        var root = new GameObject("BridgeArches").transform;
-        int i = 0;
-        while (i < n)
-        {
-            if (path.KindAt(i) != TrackPath.Kind.Bridge) { i++; continue; }
-            int start = i;
-            while (i < n && path.KindAt(i) == TrackPath.Kind.Bridge) i++;
-            int end = i - 1;
-
-            float startDist = 0f;
-            for (int k = 1; k <= start; k++) startDist += Vector3.Distance(path.PointAt(k - 1), path.PointAt(k));
-            float len = 0f;
-            for (int k = start + 1; k <= end; k++) len += Vector3.Distance(path.PointAt(k - 1), path.PointAt(k));
-            if (len < 150f) continue;
-
-            int spans = Mathf.Max(1, Mathf.RoundToInt(len / 100f));
-            float span = len / spans;
-            for (int s = 0; s <= spans; s++)
-            {
-                path.SampleAtDistance(startDist + s * span, out Vector3 pos, out Vector3 fwd);
-                var pier = Prim(PrimitiveType.Cube, "Pier" + s, root, pos + Vector3.up * (-1.5f - 7f), new Vector3(5.2f, 14f, 2.4f), m.Concrete, true);
-                pier.transform.rotation = Quaternion.LookRotation(new Vector3(fwd.x, 0f, fwd.z).normalized, Vector3.up);
-                pier.isStatic = true;
-            }
-            for (int s = 0; s < spans; s++)
-                BuildArch(path, root, startDist + s * span, span, m);
-        }
-    }
-
-    static void BuildArch(TrackPath path, Transform parent, float d0, float span, Mats m)
-    {
-        path.SampleAtDistance(d0 + span * 0.5f, out Vector3 mid, out Vector3 fwd);
-        fwd = new Vector3(fwd.x, 0f, fwd.z).normalized;
-        var rot = Quaternion.LookRotation(fwd, Vector3.up);
-        var arch = new GameObject("Arch").transform;
-        arch.SetParent(parent, false);
-        arch.SetPositionAndRotation(mid, rot);
-
-        float height = Mathf.Min(24f, span * 0.24f);
-        const int N = 20;
-        var pts = new Vector3[N + 1];
-        for (int k = 0; k <= N; k++)
-        {
-            float t = k / (float)N;
-            pts[k] = new Vector3(0f, 0.5f + height * 4f * t * (1f - t), (t - 0.5f) * span);
-        }
-        foreach (float x in new[] { -3.5f, 3.5f })
-        {
-            for (int k = 0; k < N; k++)
-            {
-                Vector3 a = pts[k] + Vector3.right * x, b = pts[k + 1] + Vector3.right * x;
-                var seg = Prim(PrimitiveType.Cube, "rib", arch, (a + b) * 0.5f, new Vector3(0.9f, 1.3f, (b - a).magnitude + 0.15f), m.BridgeSteel, false);
-                seg.transform.localRotation = Quaternion.LookRotation((b - a).normalized, Vector3.up);
-                seg.isStatic = true;
-            }
-            for (int k = 2; k < N - 1; k += 2)
-            {
-                float top = pts[k].y;
-                var hanger = Prim(PrimitiveType.Cube, "hanger", arch, new Vector3(x, (top + 0.6f) * 0.5f, pts[k].z), new Vector3(0.22f, top - 0.6f, 0.22f), m.BridgeSteel, false);
-                hanger.isStatic = true;
-            }
-        }
-        // Poprzeczki między łukami – tylko tam, gdzie jest nad nimi miejsce na przejazd.
-        for (int k = 3; k < N - 2; k += 3)
-        {
-            if (pts[k].y < 7f) continue;
-            var beam = Prim(PrimitiveType.Cube, "brace", arch, new Vector3(0f, pts[k].y, pts[k].z), new Vector3(7f, 0.5f, 0.5f), m.BridgeSteel, false);
-            beam.isStatic = true;
-        }
     }
 
     static GameObject Prim(PrimitiveType type, string name, Transform parent, Vector3 pos, Vector3 scale, Material mat, bool keepCollider)

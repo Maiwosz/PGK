@@ -225,6 +225,8 @@ public class BikeController : MonoBehaviour
 
     /// <summary>Zdarzenia roweru dla telemetrii ("fall Slip ...", "stand_up ...").</summary>
     public event System.Action<string> Logged;
+    /// <summary>Wciśnięto R. Jeśli ktoś nasłuchuje (np. MissionManager), on odpowiada za restart; inaczej rower resetuje się sam.</summary>
+    public event System.Action RestartRequested;
 
     void Awake()
     {
@@ -604,8 +606,8 @@ public class BikeController : MonoBehaviour
 
         if (kb != null && kb.rKey.wasPressedThisFrame)
         {
-            // W misji R restartuje całą misję (pociąg, gangsterzy, statystyki); bez misji – tylko rower.
-            if (MissionManager.Instance != null) MissionManager.Instance.Restart();
+            // Ktoś (np. menedżer misji) może przejąć restart i zrestartować całą grę; bez subskrybenta – tylko rower.
+            if (RestartRequested != null) RestartRequested.Invoke();
             else ResetBike();
         }
         if (transform.position.y < -10f) ResetBike();

@@ -60,6 +60,7 @@ public class TrainController : MonoBehaviour
 
     void Start()
     {
+        if (path == null && MissionMap.Instance != null) path = MissionMap.Instance.Track;
         if (path == null || locomotivePrefab == null || wagonPrefab == null) { enabled = false; return; }
 
         frontDistance = TrainLength + startMargin;

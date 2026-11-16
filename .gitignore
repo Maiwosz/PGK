@@ -37,7 +37,7 @@ crashlytics-build.properties
 .DS_Store
 Thumbs.db
 
-# Generowane przez Tools/Mission/Build Map (przepis w Assets/Mission/Recipe)
+# Generowane automatycznie z przepisu (MissionMapAutoBuild / Tools/Mission/Rebuild Map; przepis w Assets/Mission/Recipe)
 /Assets/Mission/Generated/
 /Assets/Mission/Generated.meta
 
@@ -46,6 +46,3 @@ Thumbs.db
 /Assets/Temp.meta
 /ProjectSettings/SceneTemplateSettings.json
 
-# Scena misji jest generowana (GUID-y prefabów z Generated są lokalne) – po klonie uruchom Tools/Mission/Build Map
-/Assets/Scenes/MissionMap.unity
-/Assets/Scenes/MissionMap.unity.meta

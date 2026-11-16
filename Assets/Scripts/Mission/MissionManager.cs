@@ -90,13 +90,19 @@ public class MissionManager : MonoBehaviour
         if (train == null) train = FindFirstObjectByType<TrainController>();
         if (turret == null) turret = FindFirstObjectByType<AutoTurret>();
         if (gun == null) gun = FindFirstObjectByType<Gun>();
-        if (path == null) path = FindFirstObjectByType<TrackPath>();
+        if (path == null && MissionMap.Instance != null) path = MissionMap.Instance.Track;
     }
 
-    void OnEnable() => Gangster.AnyDied += OnGangsterDied;
+    void OnEnable()
+    {
+        Gangster.AnyDied += OnGangsterDied;
+        if (bike != null) bike.RestartRequested += Restart;
+    }
+
     void OnDisable()
     {
         Gangster.AnyDied -= OnGangsterDied;
+        if (bike != null) bike.RestartRequested -= Restart;
         if (Instance == this) Instance = null;
     }
 
