@@ -42,6 +42,7 @@ public class HandlebarSteering : MonoBehaviour
 
     void Update()
     {
+        if (Time.timeScale == 0f) return;     // pauza (np. okno pomocy)
         var mouse = Mouse.current;
         if (mouse == null || viewCamera == null) return;
 

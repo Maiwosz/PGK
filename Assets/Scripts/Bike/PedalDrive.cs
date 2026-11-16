@@ -337,6 +337,7 @@ public class PedalDrive : MonoBehaviour
 
     void Update()
     {
+        if (Time.timeScale == 0f) return;     // pauza (np. okno pomocy): bez klawiszy i bez zmian stanu
         float dt = Time.deltaTime;
         var kb = Keyboard.current;
         if (kb != null)

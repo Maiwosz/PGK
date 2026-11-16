@@ -557,6 +557,7 @@ public class BikeController : MonoBehaviour
 
     void Update()
     {
+        if (Time.timeScale == 0f) return;     // pauza (np. okno pomocy)
         float dt = Time.deltaTime;
         if (steering != null) steering.Speed = Mathf.Abs(speed);
         if (pedals != null) pedals.Speed = Mathf.Max(0f, speed);

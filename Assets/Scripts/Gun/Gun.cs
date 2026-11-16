@@ -228,6 +228,7 @@ public class Gun : MonoBehaviour
 
     void LateUpdate()
     {
+        if (Time.timeScale == 0f) return;     // pauza (np. okno pomocy)
         var mouse = Mouse.current;
         Camera cam = viewCamera != null ? viewCamera : Camera.main;
         if (mouse == null || cam == null) return;

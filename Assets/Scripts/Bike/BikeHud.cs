@@ -35,12 +35,7 @@ public class BikeHud : MonoBehaviour
                 u * 0.9f, Gold, TextAnchor.MiddleCenter, FontStyle.Bold);
         if (bike.Fallen) DrawFallen(u);
 
-        Label(new Rect(u * 2.3f, Screen.height - u * 4.4f, Screen.width - u * 4.6f, u * 1.0f),
-            "A / D – pedałuj w takt (klikaj naprzemiennie, gdy pasek z boku zejdzie do środka – cyjan = idealnie)  |  Shift / Ctrl – bieg cięższy / lżejszy (trzymaj wskaźnik w zielonym)",
-            u * 0.7f, Dim, TextAnchor.MiddleLeft);
-        Label(new Rect(u * 2.3f, Screen.height - u * 3.5f, Screen.width - u * 4.6f, u * 1.0f),
-            "LPM na uchwycie – kierowanie  |  Spacja – hamulec  |  S – cofanie (na postoju)  |  po upadku: przytrzymaj Spację  |  R – restart misji",
-            u * 0.7f, Dim, TextAnchor.MiddleLeft);
+        Label(new Rect(u * 2.3f, Screen.height - u * 3.1f, 600f, u * 1.0f), "F1 – sterowanie i zasady", u * 0.7f, Dim, TextAnchor.MiddleLeft);
     }
 
     // ------------------------------------------------------------ lewy górny róg
