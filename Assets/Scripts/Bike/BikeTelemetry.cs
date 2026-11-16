@@ -46,9 +46,9 @@ public class BikeTelemetry : MonoBehaviour
 
     // Statystyki skoków.
     readonly Dictionary<string, int> counts = new Dictionary<string, int>();
-    float strokeBeginT = -1f, lastCompleteT = -1f;
-    float strokeDurSum, gapSum;
-    int strokeDurN, gapN;
+    float errAbsSum;              // suma |błędu| trafień ocenianych (s)
+    int errN;
+    int bestStreak;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Bootstrap()
@@ -78,11 +78,12 @@ public class BikeTelemetry : MonoBehaviour
         samples = new StreamWriter(basePath + "_samples.csv", false, new UTF8Encoding(false));
         events = new StreamWriter(basePath + "_events.csv", false, new UTF8Encoding(false));
         samples.WriteLine("t,speed_kmh,gear_f,gear_r,ratio,cadence_rpm,power_frac,stamina,stamina_trend,pedal_factor," +
-                          "pushing,key_foot,reversing,progress,unfinished,brake_f,brake_r,steer_deg,x,z");
+                          "pushing,key_foot,progress,judge,streak,brake_f,brake_r,steer_deg,x,z");
         events.WriteLine("t,event,speed_kmh,gear_f,gear_r,stamina");
 
         t0 = Time.time;
         pedals.Logged += OnPedalEvent;
+        pedals.Judged += OnJudged;
         bike.Logged += OnPedalEvent;
         Log("session_start");
     }
@@ -160,8 +161,8 @@ public class BikeTelemetry : MonoBehaviour
                 F(pedals.GearRatio, "0.00"), F(rpm, "0"), F(e, "0.00"),
                 F(s, "0.000"), F(trend, "0.000"), F(pedals.PedalSpeedFactor, "0.00"),
                 pedals.Pushing ? "1" : "0", ((int)pedals.ActiveFoot).ToString(Inv),
-                ((int)pedals.ReversingFoot).ToString(Inv), F(pedals.Progress, "0.00"),
-                pedals.StrokeUnfinished ? "1" : "0",
+                F(pedals.Progress, "0.00"),
+                ((int)pedals.LastJudgement).ToString(Inv), pedals.HitStreak.ToString(Inv),
                 bike.FrontBrake ? "1" : "0", bike.RearBrake ? "1" : "0",
                 F(steering != null ? steering.Angle : 0f, "0"), F(p.x, "0.0"), F(p.z, "0.0")));
         }
@@ -180,25 +181,17 @@ public class BikeTelemetry : MonoBehaviour
 
         string tag = message.Split(' ')[0];
         counts[tag] = counts.TryGetValue(tag, out int n) ? n + 1 : 1;
+    }
 
-        float t = Time.time - t0;
-        if (tag == "begin")
+    /// <summary>Oceny kliknięć w takt: statystyki błędu i najdłuższej serii trafień.</summary>
+    void OnJudged(PedalDrive.Foot foot, PedalDrive.Judgement judgement, float error, float multiplier)
+    {
+        bestStreak = Mathf.Max(bestStreak, pedals.HitStreak);
+        if (judgement == PedalDrive.Judgement.Perfect || judgement == PedalDrive.Judgement.Good
+            || judgement == PedalDrive.Judgement.Early || judgement == PedalDrive.Judgement.Late)
         {
-            strokeBeginT = t;
-            if (lastCompleteT >= 0f && t - lastCompleteT < 2f)
-            {
-                gapSum += t - lastCompleteT;
-                gapN++;
-            }
-        }
-        else if (tag == "complete" || tag == "complete_grace")
-        {
-            if (strokeBeginT >= 0f)
-            {
-                strokeDurSum += t - strokeBeginT;
-                strokeDurN++;
-            }
-            lastCompleteT = t;
+            errAbsSum += Mathf.Abs(error);
+            errN++;
         }
     }
 
@@ -217,7 +210,7 @@ public class BikeTelemetry : MonoBehaviour
     void Close()
     {
         if (closed || samples == null) return;
-        if (pedals != null) pedals.Logged -= OnPedalEvent;
+        if (pedals != null) { pedals.Logged -= OnPedalEvent; pedals.Judged -= OnJudged; }
         if (bike != null) bike.Logged -= OnPedalEvent;
         Log("session_end");
         closed = true;
@@ -254,10 +247,12 @@ public class BikeTelemetry : MonoBehaviour
         Line($"napęd aktywny (siła przykładana do pedału): {pushTime:0.0} s = {Share(pushTime, ridingTime)} czasu pedałowania   <- 'duty'");
         Line($"kadencja podczas pedałowania:  w strefie {Share(zoneTime, ridingTime)}  |  za wolna ('ciężko') {Share(heavyTime, ridingTime)}  |  za szybka ('na pusto') {Share(spinTime, ridingTime)}");
         Line();
-        Line($"skoki: rozpoczęte {C("begin")}, dokończone {C("complete")} + w oknie łaski {C("complete_grace")}, przerwane za wcześnie {C("release_early")}");
-        Line($"       wznowione {C("resume")}, cofnięcia złą nogą {C("reverse")}, ta sama noga dwa razy {C("miss_same_foot")}");
-        Line($"średni czas od naciśnięcia do końca skoku: {(strokeDurN > 0 ? strokeDurSum / strokeDurN : 0f):0.00} s   (n={strokeDurN})");
-        Line($"średnia przerwa między skokami: {(gapN > 0 ? gapSum / gapN : 0f):0.00} s   (n={gapN})");
+        int perfect = C("judge_perfect"), good = C("judge_good"), early = C("judge_early"), late = C("judge_late");
+        int scored = perfect + good + early + late;
+        Line($"kliknięcia w takt: idealne {perfect} ({Share(perfect, scored)}), dobre {good} ({Share(good, scored)}), " +
+             $"za wcześnie {early}, za późno {late}; odrzucone: klepanie {C("judge_mash")}, zła noga {C("judge_wrongfoot")}");
+        Line($"starty rytmu {C("judge_start")}, zerwania rytmu {C("rhythm_lost")}, najdłuższa seria trafień {bestStreak}, " +
+             $"średni błąd {(errN > 0 ? errAbsSum / errN * 1000f : 0f):0} ms (n={errN})");
         Line($"zmiany biegów: przód {C("shift_front")} (zablokowane {C("shift_front_blocked")}), tył {C("shift_rear")} (zablokowane {C("shift_rear_blocked")})");
         Line($"markery F9: {C("MARKER")}");
         Line();

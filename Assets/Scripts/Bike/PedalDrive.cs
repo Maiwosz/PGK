@@ -1,21 +1,25 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 
 /// <summary>
-/// Pedałowanie na przytrzymanie: A = lewa noga, D = prawa noga, naprzemiennie.
-/// Jeden skok pedału (pół obrotu korby) trwa tak długo, jak kręci się korba przy
-/// aktualnej prędkości i biegu: kadencja = prędkość / (przełożenie * promień koła).
-/// Wyższy bieg lub niższa prędkość = wolniejszy obrót korby = dłuższe trzymanie klawisza.
-/// Siła napędu = moment na korbie / (przełożenie * promień koła); moment maleje
-/// wraz z kadencją (przy zbyt szybkim kręceniu rowerzysta "nie ma czym naciskać").
-/// Napęd działa tylko dopóki klawisz jest trzymany i skok nie dobiegł końca.
-/// Skok trzeba dokończyć: puszczony w połowie zostawia korbę w miejscu i wolno go kontynuować
-/// tylko tą samą nogą, a trzymanie drugiej nogi naciska pedał z tyłu i cofa korbę. Puszczenie klawisza
-/// tuż przed końcem (okno łaski) zalicza skok i pozwala od razu przejść na drugą nogę.
+/// Pedałowanie w takt (rytmicznie): A = lewa noga, D = prawa noga, naprzemiennie, jedno kliknięcie = jeden skok pedału
+/// (pół obrotu korby). Tempo wyznacza rower: skok trwa tyle, ile kręci się korba przy aktualnej prędkości i biegu
+/// (kadencja = prędkość / (przełożenie * promień koła)), więc na ciężkim biegu klika się rzadko, a na lekkim często.
+/// Kolejne kliknięcie ma wypaść w chwili, gdy skok się kończy:
+///  - idealne trafienie (wąskie okno) daje wyraźnie mocniejszy skok,
+///  - trafienie w oknie łaski daje normalny skok,
+///  - za wcześnie albo za późno poza oknem łaski – skok jest tym słabszy i kosztuje siły, im większy błąd,
+///  - klik dużo za wcześnie (klepanie w klawisze) i zła noga są odrzucane i kosztują siły.
+/// Za późne kliknięcie to po prostu przerwa w napędzie; po dłuższej przerwie rytm się zrywa i kolejny klik zaczyna nowy.
+/// Siła napędu = moment na korbie / (przełożenie * promień koła); moment maleje wraz z kadencją.
 /// </summary>
 public class PedalDrive : MonoBehaviour
 {
     public enum Foot { None, Left, Right }
+
+    /// <summary>Ocena kliknięcia. Start = pierwszy klik (rower stoi albo rytm się zerwał), Early/Late = trafienie poza oknem łaski.</summary>
+    public enum Judgement { None, Start, Perfect, Good, Early, Late, Mash, WrongFoot }
 
     [SerializeField] Key leftKey = Key.A;
     [SerializeField] Key rightKey = Key.D;
@@ -39,22 +43,45 @@ public class PedalDrive : MonoBehaviour
     [SerializeField] float drivetrainEfficiency = 0.97f;
     [Tooltip("Dolna granica prędkości używana do obliczeń przy ruszaniu (m/s).")]
     [SerializeField] float minEffectiveSpeed = 1.5f;
+    [Tooltip("Mnożnik tempa rytmu: 1 = tempo wynikające z prędkości i biegu, mniej = rzadsze kliknięcia (np. 0.6 = o 40% wolniej). Nie zmienia siły napędu na skok, tylko jak długo trwa.")]
+    [SerializeField, Range(0.2f, 1.5f)] float tempoScale = 0.6f;
     [SerializeField] float minStrokeTime = 0.07f;
     [SerializeField] float maxStrokeTime = 1.6f;
 
-    [Header("Zasady skoku")]
-    [Tooltip("Okno łaski (s): puszczenie klawisza na tyle przed końcem skoku nadal go zalicza.")]
-    [SerializeField] float graceTime = 0.12f;
-    [Tooltip("Jak szybko druga noga cofa korbę niedokończonego skoku (1 = tak szybko, jak by szła do przodu).")]
-    [SerializeField] float reverseSpeedFactor = 1f;
+    [Header("Rytm – okna trafienia")]
+    [Tooltip("Idealne trafienie: najmniej tyle sekund od chwili końca skoku (w obie strony)...")]
+    [SerializeField] float perfectWindow = 0.045f;
+    [Tooltip("...albo tyle długości skoku – liczy się większa wartość (przy szybkim tempie okno nie robi się niemożliwie wąskie).")]
+    [SerializeField, Range(0f, 0.5f)] float perfectFraction = 0.10f;
+    [Tooltip("Okno łaski (normalny skok, bez kary): najmniej tyle sekund w obie strony...")]
+    [SerializeField] float graceWindow = 0.09f;
+    [SerializeField, Range(0f, 0.5f)] float graceFraction = 0.22f;
+    [Tooltip("Kliknięcie wcześniej niż ta część skoku przed jego końcem to klepanie w klawisze: odrzucane i kosztuje siły.")]
+    [SerializeField, Range(0.2f, 1f)] float earlyRejectFraction = 0.5f;
+    [Tooltip("Po tylu sekundach od końca skoku (co najmniej) rytm się zrywa i następny klik zaczyna nowy bez kary...")]
+    [SerializeField] float lateLimit = 0.5f;
+    [Tooltip("...albo po tej części długości skoku – liczy się większa wartość.")]
+    [SerializeField] float lateLimitFraction = 0.9f;
+
+    [Header("Rytm – skutki")]
+    [Tooltip("Mnożnik mocy skoku przy idealnym trafieniu.")]
+    [SerializeField] float perfectMultiplier = 1.5f;
+    [Tooltip("Mnożnik mocy skoku w oknie łaski.")]
+    [SerializeField] float goodMultiplier = 1.0f;
+    [Tooltip("Mnożnik mocy przy największym błędzie, który jeszcze zalicza skok (rośnie liniowo od okna łaski).")]
+    [SerializeField] float poorMultiplier = 0.4f;
+    [Tooltip("Ubytek sił za największy błąd lub odrzucone kliknięcie (skalowany błędem).")]
+    [SerializeField] float missStamina = 0.04f;
+    [Tooltip("Zysk sił za idealne trafienie.")]
+    [SerializeField] float perfectStamina = 0.006f;
+    [Tooltip("Korekta opóźnienia (s): dodatnia – klik oceniany jako późniejszy; do kalibracji sprzętu.")]
+    [SerializeField] float timingOffset = 0f;
 
     [Header("Płynność napędu")]
-    [Tooltip("Wybieg napędu: po ukończonym skoku (też puszczonym w oknie łaski) napęd nie urywa się, tylko zanika w tym czasie (s). 0 = wyłączony.")]
+    [Tooltip("Wybieg napędu: po ukończonym skoku napęd nie urywa się, tylko zanika w tym czasie (s). 0 = wyłączony.")]
     [SerializeField] float tailTime = 0.10f;
-    [Tooltip("Najmniejszy poziom wybiegu po ukończonym skoku (profil siły: średnia skoku = 1, szczyt ok. 1,57).")]
+    [Tooltip("Poziom wybiegu po ukończonym skoku (profil siły: średnia skoku = 1, szczyt ok. 1,57), mnożony przez jakość skoku.")]
     [SerializeField] float tailFloor = 0.5f;
-    [Tooltip("Bufor następnej nogi (s): druga noga naciśnięta tyle (plus okno łaski) przed końcem skoku nie cofa korby, tylko rusza następny skok od razu po zakończeniu bieżącego. 0 = wyłączony.")]
-    [SerializeField] float bufferTime = 0.12f;
 
     [Header("Wytrzymałość (stamina)")]
     [Tooltip("Wydajność (ułamek szczytowej mocy przy danej kadencji), od której nie męczysz się, a powyżej której odpoczywasz. " +
@@ -78,16 +105,14 @@ public class PedalDrive : MonoBehaviour
     [SerializeField] Transform leftPedal;
     [SerializeField] Transform rightPedal;
 
-    Foot last = Foot.None;
-    Foot active = Foot.None;
-    float crankBase;        // kąt korby (stopnie) na początku bieżącego skoku
-    float progress;
+    Foot last = Foot.None;         // noga ostatniego skoku
+    bool inRhythm;                 // trwa rytm: kolejny klik jest oceniany względem końca skoku
+    float crankBase;               // kąt korby (stopnie) na początku bieżącego skoku
+    float progress = 1f;           // postęp bieżącego skoku 0..1 (1 = skończony)
+    float timeSinceEnd;            // ile sekund minęło od końca skoku (idealnej chwili następnego kliknięcia)
+    float quality = 1f;            // mnożnik mocy bieżącego skoku (ocena trafienia)
     float angle;
-    float missTimer;
-    Foot missFoot = Foot.None;
-    Foot reversing = Foot.None;   // noga, która trzyma klawisz i cofa niedokończony skok
-    Foot queued = Foot.None;      // noga naciśnięta tuż przed końcem skoku – wystartuje, gdy bieżący się skończy
-    float tailLevel;              // poziom wybiegu napędu (w jednostkach profilu siły), zanika wykładniczo
+    float tailLevel;               // poziom wybiegu napędu (w jednostkach profilu siły), zanika wykładniczo
     float stamina = 1f;
     float lastEffortTime = float.NegativeInfinity;
     int frontIndex;
@@ -95,22 +120,39 @@ public class PedalDrive : MonoBehaviour
 
     /// <summary>Aktualna prędkość roweru (m/s) – ustawia BikeController.</summary>
     public float Speed { get; set; }
+    /// <summary>Noga naciska pedał (trwa skok) – napęd aktywny.</summary>
     public bool Pushing { get; private set; }
 
-    public Foot ActiveFoot => active;
+    /// <summary>Noga, która właśnie wykonuje skok (None, gdy skok się skończył).</summary>
+    public Foot ActiveFoot => Pushing ? last : Foot.None;
     /// <summary>Postęp bieżącego skoku 0..1.</summary>
     public float Progress => progress;
-    /// <summary>Noga, która wykonała (lub właśnie wykonuje) ostatni skok.</summary>
+    /// <summary>Noga ostatniego skoku.</summary>
     public Foot StrokeFoot => last;
-    /// <summary>Skok rozpoczęty, ale niedokończony (korba stoi w połowie) – tylko ta sama noga może go dokończyć.</summary>
-    public bool StrokeUnfinished => last != Foot.None && progress < 1f && !InGrace;
-    /// <summary>Którą nogą można teraz pchnąć: po dokończonym skoku drugą, po niedokończonym tą samą.</summary>
-    public bool Expects(Foot foot) => StrokeUnfinished ? foot == last : foot != last;
-    /// <summary>Noga, której ostatnie naciśnięcie było błędne.</summary>
-    public Foot MissFoot => missFoot;
-    /// <summary>Noga, która właśnie cofa korbę niedokończonego skoku (trzyma klawisz w złym momencie).</summary>
-    public Foot ReversingFoot => reversing;
-    public float MissFlash => Mathf.Clamp01(missTimer / 0.25f);
+    /// <summary>Czy trwa rytm (inaczej pierwszy klik zaczyna nowy bez oceny).</summary>
+    public bool InRhythm => inRhythm;
+    /// <summary>Noga, która ma kliknąć następna; None, gdy rytm się nie zaczął (można dowolną).</summary>
+    public Foot ExpectedFoot => inRhythm ? Opposite(last) : Foot.None;
+    /// <summary>"Naładowanie" do następnego kliknięcia 0..1: rośnie przez skok, po jego końcu zostaje 1.</summary>
+    public float BeatCharge => inRhythm ? Mathf.Clamp01(progress) : 0f;
+    /// <summary>Za ile sekund wypada idealne kliknięcie (ujemne = już minęło). 0, gdy rytm się nie zaczął.</summary>
+    public float TimeToBeat => !inRhythm ? 0f : progress < 1f ? (1f - progress) * StrokeTime(Speed) : -timeSinceEnd;
+    /// <summary>Połowa okna idealnego trafienia (s) przy obecnym tempie.</summary>
+    public float PerfectWindow => Mathf.Max(perfectWindow, perfectFraction * StrokeTime(Speed));
+    /// <summary>Ułamek skoku przed jego końcem, od którego kliknięcie to klepanie (odrzucane).</summary>
+    public float EarlyRejectFraction => earlyRejectFraction;
+    /// <summary>Połowa okna łaski (s) przy obecnym tempie.</summary>
+    public float GraceWindow => Mathf.Max(graceWindow, graceFraction * StrokeTime(Speed));
+
+    /// <summary>Ostatnia ocena kliknięcia, jej noga, czas (Time.time) i błąd (s; ujemny = za wcześnie).</summary>
+    public Judgement LastJudgement { get; private set; }
+    public Foot LastJudgedFoot { get; private set; }
+    public float LastJudgementTime { get; private set; } = float.NegativeInfinity;
+    public float LastError { get; private set; }
+    /// <summary>Ile kolejnych kliknięć było idealnych lub w oknie łaski.</summary>
+    public int HitStreak { get; private set; }
+    /// <summary>Każda ocena kliknięcia: noga, ocena, błąd w sekundach (ujemny = za wcześnie), mnożnik mocy skoku.</summary>
+    public event System.Action<Foot, Judgement, float, float> Judged;
 
     public int FrontGear => frontIndex + 1;
     public int FrontGearCount => chainrings.Length;
@@ -171,9 +213,6 @@ public class PedalDrive : MonoBehaviour
     /// <summary>Ile trwa jeden skok pedału (s) przy danej prędkości i obecnym biegu (z karą za zmęczenie).</summary>
     public float StrokeTime(float v) => 1f / StrokeRate(v);
 
-    /// <summary>Ile m/s przybywa za jeden pełny skok przy danej prędkości i obecnym biegu.</summary>
-    public float StrokeGain(float v) => DriveAccelerationAt(GearRatio, v) * PedalSpeedFactor * StrokeTime(v);
-
     void Awake()
     {
         frontIndex = Mathf.Clamp(startFrontGear - 1, 0, chainrings.Length - 1);
@@ -203,9 +242,8 @@ public class PedalDrive : MonoBehaviour
     /// <summary>Przyspieszenie (m/s^2) od nogi na pedale w tej chwili; 0 gdy nikt nie pcha.</summary>
     public float GetDriveAcceleration(float speed)
     {
-        // Krótkie "klepnięcie" klawisza zostaje na początku skoku, gdzie siła jest bliska zeru, i prawie nic nie daje.
-        // Wybieg (tailLevel) dochodzi tylko po ukończonym skoku, więc klepaniem go nie wykorzystasz.
-        float level = (Pushing ? ProfileAt(progress) : 0f) + tailLevel;
+        // Siła skoku wynika z jego profilu i oceny trafienia; po końcu skoku napęd jeszcze chwilę zanika (wybieg).
+        float level = (Pushing ? ProfileAt(progress) * quality : 0f) + tailLevel;
         if (level <= 0f) return 0f;
         // Zmęczony rowerzysta kręci wolniej i słabiej; skok trwa dłużej, ale za jednostkę czasu daje mniej.
         return DriveAccelerationAt(GearRatio, speed) * level * PedalSpeedFactor;
@@ -222,10 +260,9 @@ public class PedalDrive : MonoBehaviour
     {
         if (tailTime <= 0f || level <= tailLevel) return;
         tailLevel = level;
-        Emit($"tail {level:0.00}");
     }
 
-    /// <summary>Przerwanie pedałowania (np. upadek): czyści stan skoku, ale zostawia staminę pomniejszoną o staminaLoss.</summary>
+    /// <summary>Przerwanie pedałowania (np. upadek): czyści stan skoku i rytm, ale zostawia staminę pomniejszoną o staminaLoss.</summary>
     public void Interrupt(float staminaLoss)
     {
         float keep = stamina;
@@ -237,123 +274,42 @@ public class PedalDrive : MonoBehaviour
     public void ResetState()
     {
         last = Foot.None;
-        active = Foot.None;
-        reversing = Foot.None;
-        queued = Foot.None;
+        inRhythm = false;
         tailLevel = 0f;
-        progress = 0f;
+        progress = 1f;
+        timeSinceEnd = 0f;
+        quality = 1f;
         Pushing = false;
         stamina = 1f;
         StaminaTrend = 0f;
         lastEffortTime = float.NegativeInfinity;
+        LastJudgement = Judgement.None;
+        LastJudgementTime = float.NegativeInfinity;
+        HitStreak = 0;
     }
 
     /// <summary>Szybkość postępu skoku (skoki/s) – wynika z prędkości roweru i biegu.</summary>
     float StrokeRate(float v) =>
-        Mathf.Clamp(CrankOmega(v) / Mathf.PI, 1f / maxStrokeTime, 1f / minStrokeTime) * PedalSpeedFactor;
+        Mathf.Clamp(CrankOmega(v) / Mathf.PI * tempoScale, 1f / maxStrokeTime, 1f / minStrokeTime) * PedalSpeedFactor;
 
-    /// <summary>Skok jest "w oknie łaski": do końca zostało nie więcej niż graceTime sekund.</summary>
-    bool InGrace => progress < 1f && (1f - progress) / StrokeRate(Speed) <= graceTime;
+    static Foot Opposite(Foot f) => f == Foot.Left ? Foot.Right : f == Foot.Right ? Foot.Left : Foot.None;
 
     void Update()
     {
+        float dt = Time.deltaTime;
         var kb = Keyboard.current;
         if (kb != null)
         {
-            if (kb[leftKey].wasPressedThisFrame) Press(Foot.Left);
-            if (kb[rightKey].wasPressedThisFrame) Press(Foot.Right);
-
-            // Puszczenie klawisza tuż przed końcem skoku (okno łaski) dokańcza skok.
-            // Puszczenie wcześniej zostawia korbę w połowie – trzeba kontynuować tą samą nogą.
-            if (active != Foot.None && !kb[KeyOf(active)].isPressed)
-            {
-                if (InGrace)
-                {
-                    StartTail(Mathf.Max(ProfileAt(progress), tailFloor));
-                    progress = 1f;
-                    Emit("complete_grace");
-                }
-                else if (progress < 1f)
-                {
-                    Emit($"release_early p={progress:0.00}");
-                    // Skok puszczony za wcześnie: zakolejkowana noga naciska pedał z tyłu, więc cofa korbę (jak bez bufora).
-                    if (queued != Foot.None)
-                    {
-                        Foot q = queued;
-                        queued = Foot.None;
-                        if (kb[KeyOf(q)].isPressed)
-                        {
-                            reversing = q;
-                            Miss(q);
-                            Emit($"reverse {Tag(q)} p={progress:0.00}");
-                        }
-                    }
-                }
-                active = Foot.None;
-            }
-
-            // Zła noga puszczona (albo skok się już skończył) – przestaje cofać.
-            if (reversing != Foot.None && (!kb[KeyOf(reversing)].isPressed || !StrokeUnfinished))
-                reversing = Foot.None;
-
-            // Gdy zła noga nie cofa, a właściwa wciąż trzyma klawisz, skok rusza dalej sam.
-            if (reversing == Foot.None && active == Foot.None && StrokeUnfinished && kb[KeyOf(last)].isPressed)
-                active = last;
-        }
-        else
-        {
-            active = Foot.None;
-            reversing = Foot.None;
+            if (kb[leftKey].wasPressedThisFrame) Tap(Foot.Left, TapOffset(kb, dt));
+            if (kb[rightKey].wasPressedThisFrame) Tap(Foot.Right, TapOffset(kb, dt));
         }
 
-        Pushing = false;
-        float rate = StrokeRate(Speed);
-        if (reversing != Foot.None)
-        {
-            // Naciskanie pedału, który jest jeszcze z tyłu, cofa korbę.
-            progress = Mathf.Max(0f, progress - rate * reverseSpeedFactor * Time.deltaTime);
-        }
-        else if (active != Foot.None && progress < 1f)
-        {
-            // Korba obraca się z prędkością wynikającą z prędkości roweru i biegu.
-            progress = Mathf.Min(1f, progress + rate * Time.deltaTime);
-            Pushing = true;
-            if (progress >= 1f)
-            {
-                Emit("complete");
-                StartTail(tailFloor);
-            }
-        }
+        Advance(dt);
+        UpdateStamina(dt);
 
-        // Zakolejkowana noga startuje dokładnie w chwili, gdy bieżący skok się kończy – bez przerwy w napędzie.
-        if (queued != Foot.None && progress >= 1f)
-        {
-            Foot next = queued;
-            queued = Foot.None;
-            if (kb != null && kb[KeyOf(next)].isPressed)
-            {
-                crankBase += 180f;
-                last = next;
-                active = next;
-                progress = 0f;
-                Emit($"queue_start {Tag(next)}");
-            }
-        }
-
-        // Wybieg napędu zanika wykładniczo.
-        if (tailLevel > 0f)
-        {
-            tailLevel *= Mathf.Exp(-Time.deltaTime / Mathf.Max(0.01f, tailTime));
-            if (tailLevel < 0.01f) tailLevel = 0f;
-        }
-
-        UpdateStamina(Time.deltaTime);
-
-        if (missTimer > 0f) missTimer -= Time.deltaTime;
-
-        // Korba obraca się tylko o faktyczny postęp skoku – krótkie klepnięcie to tylko drgnięcie.
+        // Korba obraca się o faktyczny postęp skoku.
         float target = crankBase + 180f * progress;
-        angle = Mathf.MoveTowards(angle, target, crankFollowSpeed * Time.deltaTime);
+        angle = Mathf.MoveTowards(angle, target, crankFollowSpeed * dt);
         transform.localRotation = Quaternion.Euler(angle, 0f, 0f);
 
         // Pedały pozostają poziomo niezależnie od obrotu korby.
@@ -362,74 +318,149 @@ public class PedalDrive : MonoBehaviour
         if (rightPedal != null) rightPedal.localRotation = level;
     }
 
-    void Press(Foot foot)
+    /// <summary>
+    /// Kiedy w tej klatce (sekundy od jej początku) naprawdę wciśnięto klawisz: z czasu zdarzenia wejścia, żeby ocena
+    /// nie zależała od długości klatki. Poza zakresem klatki (np. inny zegar w edytorze) przycina się do jej końca.
+    /// </summary>
+    static float TapOffset(Keyboard kb, float dt)
     {
-        bool unfinished = last != Foot.None && progress < 1f && !InGrace;
+        float age = (float)(InputState.currentTime - kb.lastUpdateTime);
+        if (float.IsNaN(age)) age = 0f;
+        return dt - Mathf.Clamp(age, 0f, dt);
+    }
 
-        if (unfinished)
+    /// <summary>Błąd kliknięcia w sekundach względem końca skoku: ujemny = za wcześnie, dodatni = za późno.</summary>
+    float TimingError(float offset)
+    {
+        float t = offset + timingOffset;
+        return progress < 1f ? t - (1f - progress) * StrokeTime(Speed) : timeSinceEnd + t;
+    }
+
+    void Tap(Foot foot, float offset)
+    {
+        if (!inRhythm)
         {
-            if (foot == last)
-            {
-                // Kontynuacja niedokończonego skoku tą samą nogą – korba rusza z miejsca, w którym stanęła.
-                active = foot;
-                reversing = Foot.None;
-                Emit($"resume {Tag(foot)} p={progress:0.00}");
-            }
-            else if (bufferTime > 0f && active == last && reversing == Foot.None
-                     && (1f - progress) / StrokeRate(Speed) <= graceTime + bufferTime)
-            {
-                // Bufor: skok trwa i kończy się za chwilę – druga noga czeka w kolejce zamiast cofać korbę.
-                queued = foot;
-                Emit($"queue {Tag(foot)} p={progress:0.00}");
-            }
-            else
-            {
-                // Druga noga naciska pedał, który jest jeszcze z tyłu – cofa korbę, dopóki trzyma klawisz.
-                active = Foot.None;
-                reversing = foot;
-                Miss(foot);
-                Emit($"reverse {Tag(foot)} p={progress:0.00}");
-            }
+            // Pierwszy klik (postój albo zerwany rytm): zawsze zalicza się jako normalny skok, bez oceny.
+            Begin(foot, Judgement.Start, goodMultiplier, 0f);
             return;
         }
 
         if (foot == last)
         {
-            // Poprzedni skok skończony, ale ta noga właśnie go wykonała – trzeba zmienić nogę.
-            Miss(foot);
-            Emit($"miss_same_foot {Tag(foot)}");
+            // Ta noga właśnie pchnęła – trzeba zmienić nogę.
+            Fail(foot, Judgement.WrongFoot, TimingError(offset), 1f);
             return;
         }
 
-        // Dokończenie skoku z okna łaski i start nowego od miejsca, w którym stanęła korba.
-        if (last != Foot.None)
-        {
-            crankBase += 180f;
-            if (progress < 1f)
-            {
-                StartTail(Mathf.Max(ProfileAt(progress), tailFloor));
-                Emit("complete_grace");
-            }
-        }
-        queued = Foot.None;
+        float stroke = StrokeTime(Speed);
+        float err = TimingError(offset);
+        float abs = Mathf.Abs(err);
+        float perfect = PerfectWindow, grace = GraceWindow;
 
-        last = foot;
-        active = foot;
-        progress = 0f;
-        Emit($"begin {Tag(foot)}");
+        if (abs <= perfect) { Begin(foot, Judgement.Perfect, perfectMultiplier, err); return; }
+        if (abs <= grace) { Begin(foot, Judgement.Good, goodMultiplier, err); return; }
+
+        if (err < 0f && -err > earlyRejectFraction * stroke)
+        {
+            // Dużo za wcześnie – klepanie w klawisze nie przyspiesza.
+            Fail(foot, Judgement.Mash, err, 1f);
+            return;
+        }
+
+        // Poza oknem łaski: skok się zalicza, ale tym słabszy, im większy błąd; kosztuje też siły.
+        float span = Mathf.Max(0.5f * stroke - grace, 0.05f);
+        float severity = Mathf.Clamp01((abs - grace) / span);
+        Begin(foot, err < 0f ? Judgement.Early : Judgement.Late, Mathf.Lerp(goodMultiplier, poorMultiplier, severity), err);
+        stamina = Mathf.Clamp01(stamina - missStamina * severity);
     }
 
-    Key KeyOf(Foot foot) => foot == Foot.Left ? leftKey : rightKey;
-    static string Tag(Foot foot) => foot == Foot.Left ? "L" : "R";
+    void Begin(Foot foot, Judgement judgement, float multiplier, float err)
+    {
+        // Wczesne kliknięcie ucina resztę poprzedniego skoku (jego niewykorzystana siła przepada), późne zostawia przerwę.
+        crankBase += 180f;
+        last = foot;
+        inRhythm = true;
+        progress = 0f;
+        timeSinceEnd = 0f;
+        quality = multiplier;
+        tailLevel = 0f;
+        Pushing = true;
+
+        if (judgement == Judgement.Perfect) stamina = Mathf.Clamp01(stamina + perfectStamina);
+        bool hit = judgement == Judgement.Perfect || judgement == Judgement.Good || judgement == Judgement.Start;
+        HitStreak = hit ? HitStreak + 1 : 0;
+        Report(foot, judgement, err, multiplier);
+    }
+
+    void Fail(Foot foot, Judgement judgement, float err, float severity)
+    {
+        stamina = Mathf.Clamp01(stamina - missStamina * severity);
+        HitStreak = 0;
+        Report(foot, judgement, err, 0f);
+    }
+
+    void Report(Foot foot, Judgement judgement, float err, float multiplier)
+    {
+        LastJudgement = judgement;
+        LastJudgedFoot = foot;
+        LastJudgementTime = Time.time;
+        LastError = err;
+        Emit($"judge_{judgement.ToString().ToLowerInvariant()} {(foot == Foot.Left ? "L" : "R")} err={err * 1000f:+0;-0;0}ms x{multiplier:0.00}");
+        Judged?.Invoke(foot, judgement, err, multiplier);
+    }
+
+    /// <summary>Postęp skoku i odliczanie przerwy po jego końcu; zbyt długa przerwa zrywa rytm.</summary>
+    void Advance(float dt)
+    {
+        if (!inRhythm) { Pushing = false; return; }
+
+        if (progress < 1f)
+        {
+            float rate = StrokeRate(Speed);
+            float need = (1f - progress) / rate;
+            Pushing = true;
+            if (dt < need)
+            {
+                progress += rate * dt;
+            }
+            else
+            {
+                // Skok skończył się w tej klatce; reszta klatki to już przerwa przed następnym kliknięciem.
+                progress = 1f;
+                timeSinceEnd = dt - need;
+                StartTail(tailFloor * quality);
+                Emit("stroke_end");
+            }
+        }
+        else
+        {
+            Pushing = false;
+            timeSinceEnd += dt;
+            if (timeSinceEnd > Mathf.Max(lateLimit, lateLimitFraction * StrokeTime(Speed)))
+            {
+                inRhythm = false;
+                HitStreak = 0;
+                Emit("rhythm_lost");
+            }
+        }
+
+        // Wybieg napędu zanika wykładniczo.
+        if (tailLevel > 0f)
+        {
+            tailLevel *= Mathf.Exp(-dt / Mathf.Max(0.01f, tailTime));
+            if (tailLevel < 0.01f) tailLevel = 0f;
+        }
+    }
 
     /// <summary>
     /// Stamina zależy od wydajności pedałowania przy obecnej kadencji: w zielonej strefie (>= sweetPowerFraction)
     /// się nie męczysz, a im bliżej środka strefy, tym szybciej odpoczywasz. Poza strefą ubywa ci sił,
     /// tym szybciej, im dalej od niej. Gdy nie pedałujesz, regenerujesz się powoli niezależnie od biegu.
+    /// Dodatkowo kosztują siły błędy rytmu (patrz Tap/Fail).
     /// </summary>
     void UpdateStamina(float dt)
     {
-        if (Pushing || active != Foot.None || reversing != Foot.None)
+        if (Pushing || inRhythm)
             lastEffortTime = Time.time;
 
         float trend;
@@ -447,11 +478,5 @@ public class PedalDrive : MonoBehaviour
 
         StaminaTrend = trend;
         stamina = Mathf.Clamp01(stamina + trend * dt);
-    }
-
-    void Miss(Foot foot)
-    {
-        missTimer = 0.25f;
-        missFoot = foot;
     }
 }

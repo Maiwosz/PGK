@@ -664,6 +664,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c8d4c185bf10ff54cb57daa6e63992a9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PedalDrive
+--- !u!20 &1863924272 stripped
+Camera:
+  m_CorrespondingSourceObject: {fileID: 5038485763995587549, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
+  m_PrefabInstance: {fileID: 1863924264}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1987416849
 GameObject:
   m_ObjectHideFlags: 0
@@ -674,6 +679,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1987416851}
   - component: {fileID: 1987416850}
+  - component: {fileID: 1987416852}
   m_Layer: 0
   m_Name: HUD
   m_TagString: Untagged
@@ -711,6 +717,30 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1987416852
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1987416849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c7467e527d7bb8a45ac557326aab7e16, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RhythmHud
+  pedals: {fileID: 1863924269}
+  bike: {fileID: 1863924265}
+  cam: {fileID: 1863924272}
+  minWidth: 0.05
+  maxWidth: 0.16
+  height: 0.75
+  flashTime: 0.28
+  vignetteStartStamina: 0.6
+  vignetteFullStamina: 0.05
+  vignetteMaxAlpha: 0.9
+  fovNarrowing: 7
+  smoothing: 3
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

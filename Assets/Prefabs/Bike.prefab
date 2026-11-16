@@ -6521,11 +6521,8 @@ MonoBehaviour:
   minEffectiveSpeed: 1.5
   minStrokeTime: 0.07
   maxStrokeTime: 1.6
-  graceTime: 0.12
-  reverseSpeedFactor: 1
   tailTime: 0.1
   tailFloor: 0.5
-  bufferTime: 0.12
   sweetPowerFraction: 0.85
   staminaRegen: 0.05
   staminaCoastRegen: 0.03

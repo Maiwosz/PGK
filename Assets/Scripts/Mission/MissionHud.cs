@@ -39,7 +39,7 @@ public class MissionHud : MonoBehaviour
             DrawTurretPanel(u);
             DrawWarning(u);
             if (mission.LosingDisabled)
-                Label(new Rect(Screen.width * 0.5f - 400f, u * 0.4f, 800f, u * 1.2f), "DEBUG: przegrana misji wyłączona (F9)", u * 0.9f, Bad, TextAnchor.MiddleCenter, FontStyle.Bold);
+                Label(new Rect(Screen.width * 0.5f - 400f, u * 2.4f, 800f, u * 0.8f), "DEBUG: przegrana misji wyłączona (F9)", u * 0.7f, Bad, TextAnchor.MiddleCenter, FontStyle.Bold);
         }
         else DrawEndScreen(u);
     }
