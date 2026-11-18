@@ -8,7 +8,6 @@ public class BikeHud : MonoBehaviour
 {
     [SerializeField] BikeController bike;
     [SerializeField] PedalDrive pedals;
-    [SerializeField] HandlebarSteering steering;
 
     static readonly Color Panel = new Color(0f, 0f, 0f, 0.55f);
     static readonly Color Gold = new Color(1f, 0.85f, 0.2f);
@@ -41,13 +40,6 @@ public class BikeHud : MonoBehaviour
         float y = u;
         Label(new Rect(u * 2.3f, y, 600f, u * 1.6f), $"{bike.SpeedKmh:0.0} km/h", u * 1.4f, Color.white, TextAnchor.MiddleLeft, FontStyle.Bold);
         y += u * 1.7f;
-
-        if (steering != null)
-        {
-            string state = steering.IsGrabbed ? "trzymana" : "puszczona";
-            Label(new Rect(u * 2.3f, y, 600f, u * 1.2f), $"Kierownica: {steering.Angle:+0;-0;0}° ({state})", u * 0.85f, Color.white, TextAnchor.MiddleLeft);
-            y += u * 1.3f;
-        }
 
         if (bike.Braking)
         {

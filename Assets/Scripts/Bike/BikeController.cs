@@ -577,13 +577,13 @@ public class BikeController : MonoBehaviour
         if (pedals != null) pedals.Speed = Mathf.Max(0f, speed);
 
         var kb = Keyboard.current;
-        reverseHeld = !fallen && !controlLocked && kb != null && kb.sKey.isPressed;
+        reverseHeld = !fallen && !controlLocked && GameSettings.IsPressed(kb, GameAction.Reverse);
 
         if (fallen)
         {
             // Wstawanie: przytrzymaj Spację (po minimalnym czasie leżenia i gdy rower prawie stoi).
             downTimer += dt;
-            bool hold = !controlLocked && kb != null && kb.spaceKey.isPressed && CanStandUp;
+            bool hold = !controlLocked && GameSettings.IsPressed(kb, GameAction.Brake) && CanStandUp;
             if (hold) standProgress += dt / standUpTime;
             else standProgress = Mathf.Max(0f, standProgress - dt / standUpTime * 1.5f);
             if (standProgress >= 1f) StandUp();
@@ -595,18 +595,18 @@ public class BikeController : MonoBehaviour
         else
         {
             // Hamulec (Spacja) i zmiana biegu (Shift = cięższy, Ctrl = lżejszy; jeden klik = jeden bieg) – bez trzymania uchwytu.
-            Braking = kb != null && kb.spaceKey.isPressed;
+            Braking = GameSettings.IsPressed(kb, GameAction.Brake);
 
             if (kb != null && pedals != null)
             {
                 int dir = 0;
-                if (kb.leftShiftKey.wasPressedThisFrame) dir += 1;
-                if (kb.leftCtrlKey.wasPressedThisFrame) dir -= 1;
+                if (GameSettings.WasPressed(kb, GameAction.GearHeavier)) dir += 1;
+                if (GameSettings.WasPressed(kb, GameAction.GearLighter)) dir -= 1;
                 if (dir != 0) pedals.Shift(dir);
             }
         }
 
-        if (kb != null && kb.rKey.wasPressedThisFrame)
+        if (GameSettings.WasPressed(kb, GameAction.Restart))
         {
             // Ktoś (np. menedżer misji) może przejąć restart i zrestartować całą grę; bez subskrybenta – tylko rower.
             if (RestartRequested != null) RestartRequested.Invoke();

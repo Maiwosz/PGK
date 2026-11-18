@@ -212,7 +212,7 @@ MonoBehaviour:
   missSpread: 2.2
   tracerMaterial: {fileID: 2100000, guid: 41e2e352c4d841247bdea8f6a6ee1b5b, type: 2}
   tracerLife: 0.09
-  volume: 0.35
+  volume: 0.7
 --- !u!4 &203959237
 Transform:
   m_ObjectHideFlags: 0
@@ -267,6 +267,7 @@ GameObject:
   m_Component:
   - component: {fileID: 876288484}
   - component: {fileID: 876288483}
+  - component: {fileID: 876288485}
   m_Layer: 0
   m_Name: Train
   m_TagString: Untagged
@@ -320,6 +321,23 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &876288485
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 876288482}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0ee5ad2d2290637488bcee700b48422f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TrainAudio
+  train: {fileID: 0}
+  level: 0.9
+  minDistance: 12
+  maxDistance: 260
+  railJoint: 12
 --- !u!1001 &1011317454
 PrefabInstance:
   m_ObjectHideFlags: 0

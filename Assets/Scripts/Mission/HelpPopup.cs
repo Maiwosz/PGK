@@ -10,8 +10,9 @@ using UnityEngine.InputSystem;
 public class HelpPopup : MonoBehaviour
 {
     public static bool IsOpen { get; private set; }
+    /// <summary>Klatka, w której okno zostało zamknięte (Esc zamykający pomoc nie ma od razu otwierać menu ustawień).</summary>
+    public static int ClosedFrame { get; private set; } = -1;
 
-    float previousScale = 1f;
     PedalDrive pedals;
     GUIStyle label, wrap;
 
@@ -44,16 +45,16 @@ public class HelpPopup : MonoBehaviour
     void Show()
     {
         if (IsOpen) return;
-        previousScale = Time.timeScale > 0f ? Time.timeScale : 1f;
-        Time.timeScale = 0f;
+        GamePause.Push();
         IsOpen = true;
     }
 
     void Hide()
     {
         if (!IsOpen) return;
-        Time.timeScale = previousScale;
+        GamePause.Pop();
         IsOpen = false;
+        ClosedFrame = Time.frameCount;
     }
 
     /// <summary>Zamyka okno (np. z narzędzi testowych).</summary>
@@ -67,6 +68,7 @@ public class HelpPopup : MonoBehaviour
     {
         var kb = Keyboard.current;
         if (kb == null) return;
+        if (PauseMenu.IsOpen) return;
         if (kb.f1Key.wasPressedThisFrame) { if (IsOpen) Hide(); else Show(); return; }
         if (IsOpen && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame || kb.escapeKey.wasPressedThisFrame))
             Hide();
@@ -104,14 +106,15 @@ public class HelpPopup : MonoBehaviour
         yl += u * 1.4f;
         string[,] keys =
         {
-            { "A / D", pm != null ? pm.ControlsHelp : "pedałuj (naprzemiennie)" },
-            { "Shift / Ctrl", "bieg cięższy / lżejszy" },
-            { "Spacja", "hamulec (po upadku: przytrzymaj, aby wstać)" },
+            { GameSettings.KeyName(GameAction.PedalLeft) + " / " + GameSettings.KeyName(GameAction.PedalRight), pm != null ? pm.ControlsHelp : "pedałuj (naprzemiennie)" },
+            { GameSettings.KeyName(GameAction.GearHeavier) + " / " + GameSettings.KeyName(GameAction.GearLighter), "bieg cięższy / lżejszy" },
+            { GameSettings.KeyName(GameAction.Brake), "hamulec (po upadku: przytrzymaj, aby wstać)" },
             { "LPM na uchwycie", "kierowanie – przytrzymaj i obracaj myszką" },
-            { "S", "cofanie (na postoju)" },
+            { GameSettings.KeyName(GameAction.Reverse), "cofanie (na postoju)" },
             { "LPM na broni", "chwyć broń i celuj (kursor); PPM – strzał" },
-            { "R", "restart misji" },
+            { GameSettings.KeyName(GameAction.Restart), "restart misji" },
             { "F1", "to okno (zatrzymuje grę)" },
+            { "Esc", "ustawienia: dźwięk, tryb pedałowania, klawisze (zatrzymuje grę)" },
         };
         for (int i = 0; i < keys.GetLength(0); i++)
         {
@@ -126,7 +129,7 @@ public class HelpPopup : MonoBehaviour
         yr += u * 1.4f;
         string[] mech =
         {
-            pm != null ? pm.MechanicsHelp : "",
+            pm != null ? pm.MechanicsHelp.Replace("A albo D", GameSettings.KeyName(GameAction.PedalLeft) + " albo " + GameSettings.KeyName(GameAction.PedalRight)).Replace("A i D", GameSettings.KeyName(GameAction.PedalLeft) + " i " + GameSettings.KeyName(GameAction.PedalRight)) : "",
             "<b>Biegi.</b> Pasek przy dolnej krawędzi pokazuje wszystkie biegi od najlżejszego (z lewej) do najcięższego (z prawej). Trzymaj biały wskaźnik w zielonym – tam napęd jest najmocniejszy. Optimum przesuwa się w prawo razem z prędkością.",
             "<b>Zmęczenie.</b> Błędy w pedałowaniu męczą, seria dobrych ruchów pozwala odpocząć. Zmęczenie zwęża pole widzenia i osłabia pedałowanie.",
             "<b>Strzelanie.</b> Big Smoke z wieżyczki namierza gangsterów sam, ale celuje tym lepiej, im stabilniej jedziesz – bez szarpania kierownicą i gwałtownego hamowania.",

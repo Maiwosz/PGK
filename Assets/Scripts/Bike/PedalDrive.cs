@@ -22,9 +22,6 @@ public class PedalDrive : MonoBehaviour
     [Tooltip("Aktywny tryb pedałowania: przeciągnij tu komponent trybu z tego samego obiektu (RhythmPedaling albo HoldPedaling).")]
     [SerializeField] PedalingMode mode;
 
-    [SerializeField] Key leftKey = Key.A;
-    [SerializeField] Key rightKey = Key.D;
-
     [Header("Biegi (kombinacje tarcza x zębatka w jednej kolejności od najlżejszej do najcięższej)")]
     [Tooltip("Liczba zębów tarcz z przodu.")]
     [SerializeField] int[] chainrings = { 28, 38, 48 };
@@ -93,9 +90,13 @@ public class PedalDrive : MonoBehaviour
 
     /// <summary>Aktywny tryb pedałowania.</summary>
     public PedalingMode Mode => mode;
-    public Key LeftKey => leftKey;
-    public Key RightKey => rightKey;
-    public Key KeyOf(Foot foot) => foot == Foot.Left ? leftKey : rightKey;
+    /// <summary>Klawisze nóg: przypisuje gracz w menu ustawień (Esc).</summary>
+    public Key LeftKey => GameSettings.GetKey(GameAction.PedalLeft);
+    public Key RightKey => GameSettings.GetKey(GameAction.PedalRight);
+    public Key KeyOf(Foot foot) => foot == Foot.Left ? LeftKey : RightKey;
+
+    /// <summary>Zmienia aktywny tryb pedałowania (stan skoku czyści się w następnej klatce).</summary>
+    public void SetMode(PedalingMode newMode) { if (newMode != null) mode = newMode; }
     public static Foot Opposite(Foot f) => f == Foot.Left ? Foot.Right : f == Foot.Right ? Foot.Left : Foot.None;
 
     /// <summary>Aktualna prędkość roweru (m/s) – ustawia BikeController.</summary>
@@ -213,6 +214,8 @@ public class PedalDrive : MonoBehaviour
         order = PickGears(codes, Mathf.Clamp(gearCount, 2, codes.Count));
         SelectStartGear();
         if (mode == null) mode = GetComponent<PedalingMode>();
+        var chosen = GameSettings.ChosenMode(this);     // wybór gracza z menu ma pierwszeństwo przed inspektorem
+        if (chosen != null) mode = chosen;
     }
 
     /// <summary>

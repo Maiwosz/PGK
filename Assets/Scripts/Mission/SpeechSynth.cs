@@ -19,6 +19,8 @@ public static class SpeechSynth
     public static void Speak(string text, string[] voices = null, int rate = 0)
     {
         Stop();
+        int volume = Mathf.RoundToInt(100f * GameSettings.VoiceGain);
+        if (volume <= 0) return;
         if (!hooked) { hooked = true; Application.quitting += Stop; }
         try
         {
@@ -34,7 +36,7 @@ public static class SpeechSynth
                 "if (-not $pick) { $pick = $all | Select-Object -First 1 }\n" +
                 "if ($pick) { $s.SelectVoice($pick.VoiceInfo.Name) }\n" +
                 "$s.Rate = " + Mathf.Clamp(rate, -10, 10) + "\n" +
-                "$s.Volume = 100\n" +
+                "$s.Volume = " + volume + "\n" +
                 "$s.Speak('" + text.Replace("'", "''") + "')\n";
             string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
             var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded)

@@ -56,7 +56,7 @@ public class AutoTurret : MonoBehaviour
     [Header("Efekty")]
     [SerializeField] Material tracerMaterial;
     [SerializeField] float tracerLife = 0.09f;
-    [SerializeField, Range(0f, 1f)] float volume = 0.35f;
+    [SerializeField, Range(0f, 1f)] float volume = 0.7f;
 
     // ---- stan
     readonly RaycastHit[] hits = new RaycastHit[24];
@@ -139,9 +139,10 @@ public class AutoTurret : MonoBehaviour
         audioSource = gameObject.AddComponent<AudioSource>();
         audioSource.spatialBlend = 0f;
         audioSource.playOnAwake = false;
-        shotClip = MakeNoiseClip(0.11f, 14f, 0.9f);
-        hitClip = MakeNoiseClip(0.05f, 40f, 0.5f);
-        killClip = MakeNoiseClip(0.18f, 9f, 0.6f);
+        // Seria z wieżyczki: lżejszy i krótszy strzał niż z ręki (mniej "kopa"), trafienie to suchy klik, zabicie – tępe uderzenie.
+        shotClip = ProcAudio.Gunshot(0.2f, 0.45f);
+        hitClip = ProcAudio.Tick(0.06f);
+        killClip = ProcAudio.Thud(0.25f);
 
         tracers = new LineRenderer[10];
         tracerTimers = new float[tracers.Length];
@@ -394,26 +395,6 @@ public class AutoTurret : MonoBehaviour
     {
         if (clip == null) return;
         audioSource.pitch = Random.Range(0.92f, 1.08f);
-        audioSource.PlayOneShot(clip, volume * gain);
-    }
-
-    /// <summary>Krótki szum z szybko gasnącą obwiednią (strzał / trafienie) – bez plików dźwiękowych.</summary>
-    internal static AudioClip MakeNoiseClip(float seconds, float decay, float lowpass)
-    {
-        const int rate = 22050;
-        int n = Mathf.CeilToInt(rate * seconds);
-        var data = new float[n];
-        var rng = new System.Random(1234 + n);
-        float prev = 0f;
-        for (int i = 0; i < n; i++)
-        {
-            float t = i / (float)rate;
-            float noise = (float)(rng.NextDouble() * 2.0 - 1.0);
-            prev = Mathf.Lerp(noise, prev, lowpass);
-            data[i] = prev * Mathf.Exp(-t * decay * 10f / Mathf.Max(0.05f, seconds * 10f)) * 0.9f;
-        }
-        var clip = AudioClip.Create("sfx", n, 1, rate, false);
-        clip.SetData(data, 0);
-        return clip;
+        audioSource.PlayOneShot(clip, volume * gain * GameSettings.EffectsGain);
     }
 }

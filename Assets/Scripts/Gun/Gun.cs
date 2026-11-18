@@ -471,7 +471,7 @@ public class Gun : MonoBehaviour
         if (clip == null)
         {
             // Mocniejszy i dłuższy od serii wieżyczki: pojedynczy strzał z ręki.
-            if (generatedShotClip == null) generatedShotClip = AutoTurret.MakeNoiseClip(0.16f, 11f, 0.8f);
+            if (generatedShotClip == null) generatedShotClip = ProcAudio.Gunshot(0.32f, 1f);
             clip = generatedShotClip;
         }
 
@@ -482,7 +482,7 @@ public class Gun : MonoBehaviour
             audioSource.playOnAwake = false;
         }
         audioSource.pitch = Random.Range(1f - shotPitchJitter, 1f + shotPitchJitter);
-        audioSource.PlayOneShot(clip, shotVolume);
+        audioSource.PlayOneShot(clip, shotVolume * GameSettings.EffectsGain);
     }
 
     static Material defaultShotLineMaterial;

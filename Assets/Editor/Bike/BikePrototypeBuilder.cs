@@ -141,6 +141,7 @@ public static class BikePrototypeBuilder
         PedalDrive pedals = root.AddComponent<PedalDrive>();
         root.AddComponent<RhythmPedaling>();
         var hold = root.AddComponent<HoldPedaling>();   // domyślny tryb: przytrzymanie
+        root.AddComponent<BikeAudio>();
 
         // Zespół kierownicy (obraca się wokół osi pionowej w główce ramy).
         var steeringGo = new GameObject("SteeringAssembly");

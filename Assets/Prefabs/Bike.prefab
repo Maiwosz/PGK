@@ -4329,6 +4329,7 @@ GameObject:
   - component: {fileID: 4614839575383314033}
   - component: {fileID: 1064062972407711450}
   - component: {fileID: 6355037342713740603}
+  - component: {fileID: 8196350326666900150}
   m_Layer: 0
   m_Name: Bike
   m_TagString: Untagged
@@ -4503,8 +4504,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PedalDrive
   mode: {fileID: 1064062972407711450}
-  leftKey: 15
-  rightKey: 18
   chainrings: 1c0000002600000030000000
   cogs: 200000001c000000180000001500000012000000100000000e000000
   gearCount: 7
@@ -4599,6 +4598,23 @@ MonoBehaviour:
   reachDistance: 5
   returnBase: 35
   returnPerSpeed: 25
+--- !u!114 &8196350326666900150
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4163419856210308073}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c21f81b2ce5383f4faac77e7495f2161, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::BikeAudio
+  bike: {fileID: 0}
+  pedals: {fileID: 0}
+  loopLevel: 0.35
+  pedalLevel: 0.8
+  fullSpeed: 14
 --- !u!1 &4211735635066118494
 GameObject:
   m_ObjectHideFlags: 0
