@@ -9,7 +9,7 @@ using UnityEngine;
 /// </summary>
 public class AutoTurret : MonoBehaviour
 {
-    public enum TurretState { Standby, OutOfRange, Blocked, Acquiring, Firing, Reloading, Off }
+    public enum TurretState { Standby, OutOfRange, Blocked, Acquiring, Firing, Off }
 
     [Header("Montaż")]
     [Tooltip("Obiekt, względem którego ustawiona jest wieżyczka (kamera roweru).")]
@@ -46,8 +46,6 @@ public class AutoTurret : MonoBehaviour
 
     [Header("Ogień")]
     [SerializeField] float fireInterval = 0.09f;
-    [SerializeField] int magazine = 15;
-    [SerializeField] float reloadTime = 1.8f;
     [SerializeField] float damage = 1.5f;
     [Tooltip("Szansa trafienia z bliska i z maksymalnego zasięgu.")]
     [SerializeField, Range(0f, 1f)] float hitChanceNear = 0.85f;
@@ -76,9 +74,6 @@ public class AutoTurret : MonoBehaviour
     HandlebarSteering steering;
     float lostTimer;
     float fireTimer;
-    int ammo;
-    float reloadTimer;
-    bool reloading;
     float scanTimer;
     bool anyAlive, anyInRange, anyVisible;
     float nearestDistance;
@@ -95,10 +90,12 @@ public class AutoTurret : MonoBehaviour
     public Gangster Target => target;
     public bool Active { get => active; set { active = value; if (!value) { target = null; state = TurretState.Off; } } }
     public float Range => range;
-    public int Ammo => ammo;
-    public int Magazine => magazine;
-    public bool Reloading => reloading;
-    public float ReloadProgress => reloading ? 1f - reloadTimer / Mathf.Max(0.01f, reloadTime) : 1f;
+    /// <summary>Czasy (Time.time) ostatniego strzału, trafienia i zabicia – dla HUD i komentarzy Big Smoke'a.</summary>
+    public float LastShotTime { get; private set; } = -99f;
+    public float LastHitTime { get; private set; } = -99f;
+    public float LastKillTime { get; private set; } = -99f;
+    /// <summary>Czy ostatni strzał trafił (do błysku pierścienia).</summary>
+    public bool LastShotHit { get; private set; }
     public float AcquireProgress => target != null ? lockProgress : 0f;
     /// <summary>Stabilność jazdy 0..1 (1 = płynna); wpływa na tempo namierzania i celność.</summary>
     public float Stability => stability;
@@ -124,14 +121,13 @@ public class AutoTurret : MonoBehaviour
                 case TurretState.Blocked: return "LINIA STRZAŁU ZASŁONIĘTA";
                 case TurretState.Acquiring: return stability < 0.45f ? "NAMIERZANIE ZAKŁÓCONE" : "NAMIERZA…";
                 case TurretState.Firing: return "OGIEŃ";
-                default: return "PRZEŁADOWANIE";
+                default: return "";
             }
         }
     }
 
     void Awake()
     {
-        ammo = magazine;
         if (anchor != null) aimDir = anchor.forward;
         if (bike == null) bike = FindFirstObjectByType<BikeController>();
         if (bike != null)
@@ -179,9 +175,7 @@ public class AutoTurret : MonoBehaviour
         havePrev = false;
         lostTimer = 0f;
         fireTimer = 0f;
-        ammo = magazine;
-        reloading = false;
-        reloadTimer = 0f;
+        LastShotTime = LastHitTime = LastKillTime = -99f;
         ShotsFired = Hits = Kills = 0;
         active = true;
         state = TurretState.Standby;
@@ -205,14 +199,6 @@ public class AutoTurret : MonoBehaviour
         // Obrót lufy ku celowi (bez celu wraca do kierunku jazdy).
         Vector3 desired = target != null ? (target.AimPosition - Muzzle).normalized : anchor.forward;
         aimDir = Vector3.RotateTowards(aimDir, desired, slewSpeed * Mathf.Deg2Rad * dt, 0f);
-
-        if (reloading)
-        {
-            reloadTimer -= dt;
-            if (reloadTimer <= 0f) { reloading = false; ammo = magazine; }
-            state = TurretState.Reloading;
-            return;
-        }
 
         if (target == null)
         {
@@ -253,7 +239,6 @@ public class AutoTurret : MonoBehaviour
             Shoot();
             burstLeft--;
             if (burstLeft <= 0) EndBurst();
-            if (ammo <= 0) { EndBurst(); reloading = true; reloadTimer = reloadTime; }
         }
     }
 
@@ -356,19 +341,21 @@ public class AutoTurret : MonoBehaviour
 
     void Shoot()
     {
-        ammo--;
         ShotsFired++;
+        LastShotTime = Time.time;
         Vector3 from = Muzzle;
         float d = Vector3.Distance(from, target.AimPosition);
         float chance = Mathf.Lerp(hitChanceNear, hitChanceFar, Mathf.Clamp01(d / range)) * Mathf.Lerp(minAccuracyFactor, 1f, stability);
         bool hit = Random.value < chance;
+        LastShotHit = hit;
         Vector3 end;
         if (hit)
         {
             end = target.AimPosition + Random.insideUnitSphere * 0.15f;
             Hits++;
+            LastHitTime = Time.time;
             bool killed = target.TakeDamage(damage);
-            if (killed) { Kills++; Play(killClip, 1f); }
+            if (killed) { Kills++; LastKillTime = Time.time; Play(killClip, 1f); }
             else Play(hitClip, 0.8f);
         }
         else

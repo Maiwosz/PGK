@@ -44,6 +44,7 @@ public class MissionManager : MonoBehaviour
     [Tooltip("Wyłącza przegranie misji (zbyt duży dystans do pociągu, przejechanie przez most) – do testowania. Przełącznik: F9 (tylko w edytorze i buildach deweloperskich).")]
     [SerializeField] bool disableLosing;
     public bool LosingDisabled => disableLosing;
+    public TrainController Train => train;
 
     public Phase CurrentPhase { get; private set; } = Phase.Running;
     /// <summary>Misja czeka na start: pociąg stoi, a czas i warunki przegranej nie biegną, dopóki gracz nie zacznie pedałować.</summary>

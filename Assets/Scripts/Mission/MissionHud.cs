@@ -1,8 +1,8 @@
 using UnityEngine;
 
 /// <summary>
-/// HUD misji (IMGUI): stan wieżyczki (Big Smoke), znaczniki i paski życia gangsterów, ostrzeżenie o ucieczce pociągu
-/// oraz ekran końcowy ze statusem i statystykami.
+/// HUD misji (IMGUI): pierścienie na gangsterach (namierzanie Big Smoke'a, drżenie od niestabilnej jazdy), pasek pociągu z ikonami
+/// gangsterów u góry, czerwona poświata, gdy pociąg ucieka, oraz ekran końcowy ze statusem i statystykami.
 /// </summary>
 public class MissionHud : MonoBehaviour
 {
@@ -16,8 +16,12 @@ public class MissionHud : MonoBehaviour
     static readonly Color Bad = new Color(1f, 0.35f, 0.3f);
     static readonly Color Dim = new Color(0.65f, 0.65f, 0.65f);
 
+    struct KillMark { public Vector3 pos; public float time; }
+
     GUIStyle text;
     Camera cam;
+    Texture2D ringTex, edgeTex;
+    readonly System.Collections.Generic.List<KillMark> kills = new System.Collections.Generic.List<KillMark>();
 
     void Awake()
     {
@@ -35,10 +39,11 @@ public class MissionHud : MonoBehaviour
         float u = Mathf.Max(16f, Screen.height / 32f);
         if (mission.CurrentPhase == MissionManager.Phase.Running)
         {
-            DrawMarkers(u);
-            DrawTurretPanel(u);
+            EnsureTextures();
+            DrawRings(u);
+            DrawTopBar(u);
             if (mission.Waiting) DrawWaiting(u);
-            else DrawWarning(u);
+            else DrawEdgeWarning(u);
             if (mission.LosingDisabled)
                 Label(new Rect(Screen.width * 0.5f - 400f, u * 2.4f, 800f, u * 0.8f), "DEBUG: przegrana misji wyłączona (F9)", u * 0.7f, Bad, TextAnchor.MiddleCenter, FontStyle.Bold);
         }
@@ -54,129 +59,181 @@ public class MissionHud : MonoBehaviour
         Label(new Rect(Screen.width * 0.5f - 600f, Screen.height * 0.3f + u * 2.1f, 1200f, u * 1.2f), "Pociąg stoi i misja się nie zaczęła – czas ruszy z pierwszym skokiem pedału (A / D).", u * 0.85f, Dim, TextAnchor.MiddleCenter);
     }
 
-    // ------------------------------------------------------------ wieżyczka
+    // ------------------------------------------------------------ pierścienie na gangsterach
 
-    void DrawTurretPanel(float u)
-    {
-        if (turret == null) return;
-        float w = u * 15f, h = u * 7.9f;
-        var r = new Rect(Screen.width - w - u, u * 2.8f, w, h);   // pod paskiem pociągu u góry ekranu
-        Fill(r, Panel);
-        Frame(r, 1f, new Color(1f, 1f, 1f, 0.2f));
-
-        Color c = StateColor(turret.State);
-        Label(new Rect(r.x + u * 0.6f, r.y + u * 0.2f, w, u * 0.9f), "BIG SMOKE", u * 0.7f, Dim, TextAnchor.MiddleLeft);
-        Label(new Rect(r.x + u * 0.6f, r.y + u * 1.0f, w - u, u * 1.2f), turret.StatusText, u * 0.95f, c, TextAnchor.MiddleLeft, FontStyle.Bold);
-
-        // amunicja / przeładowanie / namierzanie
-        var bar = new Rect(r.x + u * 0.6f, r.y + u * 2.5f, w - u * 1.2f, u * 0.6f);
-        Fill(bar, new Color(1f, 1f, 1f, 0.08f));
-        if (turret.Reloading)
-            Fill(new Rect(bar.x, bar.y, bar.width * turret.ReloadProgress, bar.height), new Color(0.95f, 0.6f, 0.15f));
-        else if (turret.State == AutoTurret.TurretState.Acquiring)
-            Fill(new Rect(bar.x, bar.y, bar.width * turret.AcquireProgress, bar.height), Gang);
-        else
-            Fill(new Rect(bar.x, bar.y, bar.width * turret.Ammo / Mathf.Max(1f, turret.Magazine), bar.height), Good);
-        Frame(bar, 1f, new Color(1f, 1f, 1f, 0.2f));
-        string barLabel = turret.Reloading ? "przeładowanie" : turret.State == AutoTurret.TurretState.Acquiring ? "namierzanie" : $"amunicja {turret.Ammo}/{turret.Magazine}";
-        Label(new Rect(bar.x, bar.yMax + u * 0.05f, bar.width, u * 0.8f), barLabel, u * 0.65f, Dim, TextAnchor.MiddleLeft);
-
-        // stabilność jazdy: im wyższa, tym szybciej i celniej Big Smoke namierza
-        float st = turret.Stability;
-        Color stColor = st > 0.7f ? Good : st > 0.4f ? Gang : Bad;
-        var sbar = new Rect(r.x + u * 0.6f, r.y + u * 4.5f, w - u * 1.2f, u * 0.6f);
-        Fill(sbar, new Color(1f, 1f, 1f, 0.08f));
-        Fill(new Rect(sbar.x, sbar.y, sbar.width * st, sbar.height), stColor);
-        Frame(sbar, 1f, new Color(1f, 1f, 1f, 0.2f));
-        Label(new Rect(sbar.x, sbar.yMax + u * 0.05f, sbar.width, u * 0.8f), $"stabilność jazdy {st * 100f:0}%", u * 0.65f, st > 0.7f ? Dim : stColor, TextAnchor.MiddleLeft);
-
-        // gangsterzy: kwadraty (żywy = żółty, martwy = ciemny)
-        Label(new Rect(r.x + u * 0.6f, r.y + u * 6.2f, u * 6f, u * 1.2f), "GANGSTERZY", u * 0.7f, Dim, TextAnchor.MiddleLeft);
-        int total = Mathf.Max(1, mission.TotalGangsters);
-        for (int i = 0; i < total; i++)
-        {
-            var box = new Rect(r.xMax - u * 0.6f - (total - i) * u * 1.2f, r.y + u * 6.35f, u * 0.95f, u * 0.95f);
-            bool alive = i < mission.AliveGangsters;
-            Fill(box, alive ? Gang : new Color(0.25f, 0.25f, 0.25f));
-            Frame(box, 1f, new Color(1f, 1f, 1f, 0.3f));
-        }
-    }
-
-    static Color StateColor(AutoTurret.TurretState s)
-    {
-        switch (s)
-        {
-            case AutoTurret.TurretState.Firing: return Bad;
-            case AutoTurret.TurretState.Acquiring: return Gang;
-            case AutoTurret.TurretState.Reloading: return new Color(0.95f, 0.6f, 0.15f);
-            case AutoTurret.TurretState.Blocked: return new Color(0.7f, 0.7f, 0.95f);
-            case AutoTurret.TurretState.OutOfRange: return Dim;
-            default: return Color.white;
-        }
-    }
-
-    // ------------------------------------------------------------ znaczniki gangsterów
-
-    void DrawMarkers(float u)
+    /// <summary>
+    /// Wokół namierzanego gangstera zaciska się pierścień (postęp namierzania); drży tym mocniej, im gorsza stabilność jazdy.
+    /// Strzał, trafienie i zabicie dają błysk. Pozostali żywi gangsterzy mają cienki, przygaszony pierścień.
+    /// </summary>
+    void DrawRings(float u)
     {
         if (cam == null || turret == null) return;
+        float now = Time.time;
         foreach (var g in Gangster.All)
         {
             if (!g.Alive) continue;
-            Vector3 world = g.HeadPosition + Vector3.up * 0.45f;
-            Vector3 sp = cam.WorldToScreenPoint(world);
+            Vector3 sp = cam.WorldToScreenPoint(g.AimPosition);
             if (sp.z <= 0.5f) continue;
             float dist = Vector3.Distance(turret.Muzzle, g.AimPosition);
             if (dist > 260f) continue;
-
-            float x = sp.x, y = Screen.height - sp.y;
             float scale = Mathf.Clamp(35f / Mathf.Max(8f, dist), 0.55f, 1.6f);
-            bool isTarget = turret.Target == g;
-            bool inRange = dist <= turret.Range;
+            float r = u * 1.5f * scale;
+            float x = sp.x, y = Screen.height - sp.y;
 
-            Color tint = isTarget ? StateColor(turret.State) : (inRange ? Gang : Dim);
-            float w = u * 3.2f * scale, h = u * 0.4f * scale;
-            var bar = new Rect(x - w * 0.5f, y - h, w, h);
-            Fill(bar, Panel);
-            Fill(new Rect(bar.x, bar.y, bar.width * g.Health01, bar.height), Gang);
-            Frame(bar, 1f, tint);
-            Label(new Rect(x - w, y - h - u * 0.9f * scale, w * 2f, u * 0.8f * scale), $"{dist:0} m", u * 0.65f * scale, tint, TextAnchor.MiddleCenter);
-
-            if (isTarget)
+            if (turret.Target != g)
             {
-                // celownik: narożniki wokół tułowia
-                Vector3 chest = cam.WorldToScreenPoint(g.AimPosition);
-                if (chest.z > 0.5f)
-                {
-                    float cx = chest.x, cy = Screen.height - chest.y, s = u * 1.8f * scale, t = 2f, l = s * 0.45f;
-                    DrawCorners(new Rect(cx - s, cy - s, s * 2f, s * 2f), l, t, tint);
-                }
+                bool inRange = dist <= turret.Range;
+                Ring(x, y, r * 0.8f, inRange ? new Color(Gang.r, Gang.g, Gang.b, 0.55f) : new Color(1f, 1f, 1f, 0.25f));
+                continue;
             }
+
+            bool firing = turret.State == AutoTurret.TurretState.Firing;
+            float lockP = firing ? 1f : turret.AcquireProgress;
+            float shake = (1f - turret.Stability) * r * 0.9f;
+            x += (Mathf.PerlinNoise(now * 28f, 1.3f) - 0.5f) * 2f * shake;
+            y += (Mathf.PerlinNoise(now * 28f, 7.9f) - 0.5f) * 2f * shake;
+
+            Color c = firing ? Bad : Color.Lerp(Gang, Color.white, lockP * lockP);
+            Ring(x, y, r, c);
+            if (!firing) Ring(x, y, r * Mathf.Lerp(2.4f, 1f, lockP), new Color(c.r, c.g, c.b, 0.55f + 0.4f * lockP));
+            Fill(new Rect(x - 2f, y - 2f, 4f, 4f), c);
+
+            float shot = now - turret.LastShotTime;
+            if (shot >= 0f && shot < 0.12f)
+                Ring(x, y, r * (1f + shot * 3f), new Color(1f, 1f, 1f, (1f - shot / 0.12f) * (turret.LastShotHit ? 0.9f : 0.35f)));
+            float hit = now - turret.LastHitTime;
+            if (hit >= 0f && hit < 0.25f)
+                Ring(x, y, r * (1.2f + hit * 5f), new Color(1f, 0.55f, 0.2f, 1f - hit / 0.25f));
+        }
+
+        // Zabicie: złoty pierścień rozszerzający się w miejscu gangstera.
+        for (int i = kills.Count - 1; i >= 0; i--)
+        {
+            float age = now - kills[i].time;
+            if (age > 0.7f) { kills.RemoveAt(i); continue; }
+            Vector3 sp = cam.WorldToScreenPoint(kills[i].pos);
+            if (sp.z <= 0.5f) continue;
+            float k = age / 0.7f;
+            Ring(sp.x, Screen.height - sp.y, u * (1.2f + 4f * k), new Color(1f, 0.85f, 0.2f, 1f - k));
+            Ring(sp.x, Screen.height - sp.y, u * (0.6f + 2.5f * k), new Color(1f, 1f, 1f, 1f - k));
         }
     }
 
-    static void DrawCorners(Rect r, float len, float t, Color c)
+    void Ring(float cx, float cy, float radius, Color c)
     {
-        Fill(new Rect(r.x, r.y, len, t), c); Fill(new Rect(r.x, r.y, t, len), c);
-        Fill(new Rect(r.xMax - len, r.y, len, t), c); Fill(new Rect(r.xMax - t, r.y, t, len), c);
-        Fill(new Rect(r.x, r.yMax - t, len, t), c); Fill(new Rect(r.x, r.yMax - len, t, len), c);
-        Fill(new Rect(r.xMax - len, r.yMax - t, len, t), c); Fill(new Rect(r.xMax - t, r.yMax - len, t, len), c);
+        Color prev = GUI.color;
+        GUI.color = c;
+        GUI.DrawTexture(new Rect(cx - radius, cy - radius, radius * 2f, radius * 2f), ringTex);
+        GUI.color = prev;
     }
 
-    // ------------------------------------------------------------ ostrzeżenie i napisy
+    // ------------------------------------------------------------ pasek pociągu u góry
 
-    void DrawWarning(float u)
+    /// <summary>Ikona pociągu jedzie w prawo do ikony mostu; na pociągu są ikony gangsterów (wypełnienie = życie).</summary>
+    void DrawTopBar(float u)
+    {
+        var train = mission.Train;
+        if (train == null || mission.BridgeEndDistance <= 1f || mission.BridgeEndDistance > 1e8f) return;
+        float w = Screen.width * 0.4f;
+        float x0 = Screen.width * 0.5f - w * 0.5f;
+        float y = u * 1.9f;
+        float prog = Mathf.Clamp01(train.FrontDistance / mission.BridgeEndDistance);
+
+        // tor
+        Fill(new Rect(x0, y + u * 0.35f, w, u * 0.12f), new Color(1f, 1f, 1f, 0.35f));
+
+        // most (prawy koniec): pomost na filarach
+        float bx = x0 + w;
+        var bridgeCol = new Color(0.85f, 0.85f, 0.85f, 0.9f);
+        Fill(new Rect(bx - u * 0.9f, y + u * 0.1f, u * 1.8f, u * 0.2f), bridgeCol);
+        for (int i = 0; i < 3; i++) Fill(new Rect(bx - u * 0.8f + i * u * 0.75f, y + u * 0.3f, u * 0.2f, u * 0.55f), bridgeCol);
+
+        // pociąg: lokomotywa z przodu, wagon z gangsterami za nią
+        int total = Mathf.Max(1, mission.TotalGangsters);
+        float slot = u * 0.95f, pad = u * 0.15f;
+        float carW = total * (slot + pad) + pad;
+        float locoW = u * 1.5f, h = u * 1.2f;
+        float right = Mathf.Lerp(x0 + carW + locoW, x0 + w, prog);
+        float ty = y - u * 0.25f;
+        var locoCol = new Color(0.3f, 0.3f, 0.32f, 0.95f);
+        Rect loco = new Rect(right - locoW, ty + u * 0.25f, locoW, h - u * 0.25f);
+        Fill(loco, locoCol);
+        Fill(new Rect(loco.x + u * 0.15f, ty, u * 0.7f, u * 0.3f), locoCol);
+        Rect car = new Rect(loco.x - carW - u * 0.1f, ty, carW, h);
+        Fill(car, new Color(0.08f, 0.08f, 0.08f, 0.85f));
+        Frame(car, 1f, new Color(1f, 1f, 1f, 0.45f));
+        for (int i = 0; i < Gangster.All.Count && i < total; i++)
+        {
+            var g = Gangster.All[i];
+            var box = new Rect(car.x + pad + i * (slot + pad), car.y + (h - slot) * 0.5f, slot, slot);
+            Fill(box, new Color(0.22f, 0.22f, 0.22f, 0.9f));
+            float f = g.Alive ? Mathf.Max(0.12f, g.Health01) : 0f;
+            Fill(new Rect(box.x, box.yMax - slot * f, slot, slot * f), Gang);
+            Frame(box, 1f, new Color(1f, 1f, 1f, g.Alive ? 0.6f : 0.2f));
+        }
+    }
+
+    // ------------------------------------------------------------ czerwona poświata przy górnej krawędzi
+
+    /// <summary>Gdy pociąg się oddala: górna krawędź ekranu rumieni się na czerwono; za granicą porażki pulsuje.</summary>
+    void DrawEdgeWarning(float u)
     {
         if (mission.CurrentPhase != MissionManager.Phase.Running || mission.LosingDisabled) return;
         float d = mission.TrainDistance;
         if (d < mission.WarnDistance) return;
-
         bool critical = d >= mission.LoseDistance;
-        string msg = critical ? $"POCIĄG UCIEKA! DOGOŃ GO – {mission.LoseCountdown:0.0} s" : $"Pociąg się oddala ({d:0} m) – dociśnij!";
-        float pulse = critical ? 0.6f + 0.4f * Mathf.Abs(Mathf.Sin(Time.time * 7f)) : 1f;
-        Color c = critical ? new Color(Bad.r, Bad.g, Bad.b, pulse) : Gang;
-        Label(new Rect(Screen.width * 0.5f - 500f, u * 3.2f, 1000f, u * 1.6f), msg, u * (critical ? 1.5f : 1.1f), c, TextAnchor.MiddleCenter, FontStyle.Bold);
+        float k = Mathf.InverseLerp(mission.WarnDistance, mission.LoseDistance, d);
+        float a = critical ? 0.7f + 0.3f * Mathf.Sin(Time.time * 9f) : Mathf.Lerp(0.15f, 0.55f, k);
+        Color prev = GUI.color;
+        GUI.color = new Color(1f, 0.1f, 0.05f, Mathf.Clamp01(a));
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height * (critical ? 0.28f : 0.2f)), edgeTex);
+        GUI.color = prev;
     }
+
+    void EnsureTextures()
+    {
+        if (ringTex == null)
+        {
+            const int N = 128;
+            ringTex = new Texture2D(N, N, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.HideAndDontSave };
+            var px = new Color32[N * N];
+            for (int y = 0; y < N; y++)
+                for (int x = 0; x < N; x++)
+                {
+                    float d = Mathf.Sqrt(Mathf.Pow((x + 0.5f) / N * 2f - 1f, 2f) + Mathf.Pow((y + 0.5f) / N * 2f - 1f, 2f));
+                    float a = Mathf.Clamp01((d - 0.88f) / 0.04f) * Mathf.Clamp01((1f - d) / 0.04f);   // pierścień o grubości ~0,1 promienia
+                    px[y * N + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                }
+            ringTex.SetPixels32(px);
+            ringTex.Apply(false, true);
+        }
+        if (edgeTex == null)
+        {
+            const int H = 64;
+            edgeTex = new Texture2D(2, H, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear, hideFlags = HideFlags.HideAndDontSave };
+            var px = new Color32[2 * H];
+            for (int y = 0; y < H; y++)
+            {
+                // wiersz 0 tekstury to jej dół, więc najjaśniejszy (górna krawędź ekranu) ma indeks H-1
+                float a = Mathf.Pow(y / (H - 1f), 2.2f);
+                px[y * 2] = px[y * 2 + 1] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+            }
+            edgeTex.SetPixels32(px);
+            edgeTex.Apply(false, true);
+        }
+    }
+
+    void OnEnable() => Gangster.AnyDied += OnGangsterDied;
+
+    void OnDisable() => Gangster.AnyDied -= OnGangsterDied;
+
+    void OnDestroy()
+    {
+        if (ringTex != null) Destroy(ringTex);
+        if (edgeTex != null) Destroy(edgeTex);
+    }
+
+    void OnGangsterDied(Gangster g) => kills.Add(new KillMark { pos = g.AimPosition, time = Time.time });
 
     // ------------------------------------------------------------ ekran końcowy
 

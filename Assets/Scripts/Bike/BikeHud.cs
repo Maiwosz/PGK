@@ -29,10 +29,6 @@ public class BikeHud : MonoBehaviour
         if (train == null) train = Object.FindFirstObjectByType<TrainController>();
         if (mission == null) mission = MissionManager.Instance;
         if (mission != null && mission.CurrentPhase != MissionManager.Phase.Running) return;   // ekran końcowy misji przejmuje HUD
-        if (train != null)
-            Label(new Rect(Screen.width * 0.5f - 300f, u, 600f, u * 1.4f),
-                $"POCIĄG  {train.SpeedKmh:0} km/h   •   {train.DistanceTo(bike.transform.position):0} m od Ciebie   •   do końca mostu {(mission != null ? mission.DistanceToBridgeEnd : train.RemainingDistance):0} m",
-                u * 0.9f, Gold, TextAnchor.MiddleCenter, FontStyle.Bold);
         if (bike.Fallen) DrawFallen(u);
 
         Label(new Rect(u * 2.3f, Screen.height - u * 3.1f, 600f, u * 1.0f), "F1 – sterowanie i zasady", u * 0.7f, Dim, TextAnchor.MiddleLeft);
