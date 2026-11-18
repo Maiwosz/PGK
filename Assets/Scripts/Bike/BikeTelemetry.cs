@@ -17,10 +17,17 @@ public class BikeTelemetry : MonoBehaviour
 {
     const string PrefKey = "PGK_TelemetryRecording";
 
-    /// <summary>Czy nagrywać telemetrię (zapamiętywane między sesjami). W edytorze: Tools/Telemetry/Recording. Domyślnie włączone.</summary>
+    /// <summary>Czy nagrywać telemetrię (zapamiętywane między sesjami). W edytorze: Tools/Telemetry/Recording. Domyślnie włączone w edytorze i buildach deweloperskich; w buildzie wydaniowym zawsze wyłączone.</summary>
     public static bool Enabled
     {
-        get => PlayerPrefs.GetInt(PrefKey, 1) != 0;
+        get
+        {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            return PlayerPrefs.GetInt(PrefKey, 1) != 0;
+#else
+            return false;     // build wydaniowy: nigdy nie nagrywamy telemetrii (ani nie pokazujemy napisu REC)
+#endif
+        }
         set { PlayerPrefs.SetInt(PrefKey, value ? 1 : 0); PlayerPrefs.Save(); }
     }
 
