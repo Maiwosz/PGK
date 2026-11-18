@@ -12,6 +12,7 @@ public class HelpPopup : MonoBehaviour
     public static bool IsOpen { get; private set; }
 
     float previousScale = 1f;
+    PedalDrive pedals;
     GUIStyle label, wrap;
 
     static readonly Color Gold = new Color(1f, 0.85f, 0.2f);
@@ -78,6 +79,9 @@ public class HelpPopup : MonoBehaviour
         label ??= new GUIStyle(GUI.skin.label) { wordWrap = false, clipping = TextClipping.Overflow };
         wrap ??= new GUIStyle(GUI.skin.label) { wordWrap = true, richText = true };
 
+        if (pedals == null) pedals = FindFirstObjectByType<PedalDrive>();
+        PedalingMode pm = pedals != null ? pedals.Mode : null;
+
         float u = Mathf.Max(16f, Screen.height / 32f);
         Fill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0f, 0f, 0f, 0.92f));
 
@@ -100,7 +104,7 @@ public class HelpPopup : MonoBehaviour
         yl += u * 1.4f;
         string[,] keys =
         {
-            { "A / D", "pedałuj w takt (naprzemiennie)" },
+            { "A / D", pm != null ? pm.ControlsHelp : "pedałuj (naprzemiennie)" },
             { "Shift / Ctrl", "bieg cięższy / lżejszy" },
             { "Spacja", "hamulec (po upadku: przytrzymaj, aby wstać)" },
             { "LPM na uchwycie", "kierowanie – przytrzymaj i obracaj myszką" },
@@ -122,9 +126,9 @@ public class HelpPopup : MonoBehaviour
         yr += u * 1.4f;
         string[] mech =
         {
-            "<b>Rytm.</b> Jedno kliknięcie to jeden skok pedału. Klikaj A i D naprzemiennie, gdy pasek z boku ekranu zejdzie do środka. Kolor końca paska mówi, co da kliknięcie teraz: <color=#59F2FF>cyjan</color> – idealnie (mocniejszy skok), <color=#59D94D>zielony</color> – dobrze, <color=#FF8A1F>pomarańczowy</color> – za wcześnie lub za późno (słabszy skok), <color=#D91A1A>czerwony</color> – źle (klepanie i zła noga są odrzucane).",
+            pm != null ? pm.MechanicsHelp : "",
             "<b>Biegi.</b> Pasek przy dolnej krawędzi pokazuje wszystkie biegi od najlżejszego (z lewej) do najcięższego (z prawej). Trzymaj biały wskaźnik w zielonym – tam napęd jest najmocniejszy. Optimum przesuwa się w prawo razem z prędkością.",
-            "<b>Zmęczenie.</b> Błędy w rytmie męczą, seria dobrych trafień pozwala odpocząć. Zmęczenie zwęża pole widzenia i osłabia pedałowanie.",
+            "<b>Zmęczenie.</b> Błędy w pedałowaniu męczą, seria dobrych ruchów pozwala odpocząć. Zmęczenie zwęża pole widzenia i osłabia pedałowanie.",
             "<b>Strzelanie.</b> Big Smoke z wieżyczki namierza gangsterów sam, ale celuje tym lepiej, im stabilniej jedziesz – bez szarpania kierownicą i gwałtownego hamowania.",
         };
         for (int i = 0; i < mech.Length; i++)

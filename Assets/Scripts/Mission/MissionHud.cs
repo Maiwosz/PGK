@@ -37,11 +37,21 @@ public class MissionHud : MonoBehaviour
         {
             DrawMarkers(u);
             DrawTurretPanel(u);
-            DrawWarning(u);
+            if (mission.Waiting) DrawWaiting(u);
+            else DrawWarning(u);
             if (mission.LosingDisabled)
                 Label(new Rect(Screen.width * 0.5f - 400f, u * 2.4f, 800f, u * 0.8f), "DEBUG: przegrana misji wyłączona (F9)", u * 0.7f, Bad, TextAnchor.MiddleCenter, FontStyle.Bold);
         }
         else DrawEndScreen(u);
+    }
+
+    /// <summary>Misja czeka na pierwszy skok pedału.</summary>
+    void DrawWaiting(float u)
+    {
+        float pulse = 0.65f + 0.35f * Mathf.Sin(Time.unscaledTime * 3f);
+        var c = new Color(1f, 0.85f, 0.2f, pulse);
+        Label(new Rect(Screen.width * 0.5f - 600f, Screen.height * 0.3f, 1200f, u * 2f), "Zacznij pedałować, aby ruszyć", u * 1.6f, c, TextAnchor.MiddleCenter, FontStyle.Bold);
+        Label(new Rect(Screen.width * 0.5f - 600f, Screen.height * 0.3f + u * 2.1f, 1200f, u * 1.2f), "Pociąg stoi i misja się nie zaczęła – czas ruszy z pierwszym skokiem pedału (A / D).", u * 0.85f, Dim, TextAnchor.MiddleCenter);
     }
 
     // ------------------------------------------------------------ wieżyczka

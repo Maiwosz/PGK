@@ -46,6 +46,8 @@ public class MissionManager : MonoBehaviour
     public bool LosingDisabled => disableLosing;
 
     public Phase CurrentPhase { get; private set; } = Phase.Running;
+    /// <summary>Misja czeka na start: pociąg stoi, a czas i warunki przegranej nie biegną, dopóki gracz nie zacznie pedałować.</summary>
+    public bool Waiting { get; private set; }
     public LossReason Reason { get; private set; }
     public int Attempt => attempt;
     public float MissionTime { get; private set; }
@@ -151,6 +153,8 @@ public class MissionManager : MonoBehaviour
         fallBase = bike != null ? bike.FallCount : 0;
         lastBikePos = bike != null ? bike.transform.position : Vector3.zero;
         AliveGangsters = CountAlive();
+        Waiting = true;
+        if (train != null) train.Waiting = true;
         Speak(introLine, new[] { "David" });
     }
 
@@ -176,6 +180,16 @@ public class MissionManager : MonoBehaviour
             farTimer = 0f;
         }
         if (CurrentPhase != Phase.Running) return;
+
+        // Start dopiero od pierwszego skoku pedału: do tej pory pociąg stoi, a czas i przegrana nie biegną.
+        if (Waiting)
+        {
+            TrainDistance = train.DistanceTo(bike.transform.position);   // HUD pokazuje odległość już przed startem
+            if (!bike.HasPedaled) return;
+            Waiting = false;
+            train.Waiting = false;
+            lastBikePos = bike.transform.position;
+        }
 
         MissionTime += dt;
         TrainDistance = train.DistanceTo(bike.transform.position);

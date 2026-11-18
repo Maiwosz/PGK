@@ -225,8 +225,22 @@ public class BikeController : MonoBehaviour
     /// <summary>Wciśnięto R. Jeśli ktoś nasłuchuje (np. MissionManager), on odpowiada za restart; inaczej rower resetuje się sam.</summary>
     public event System.Action RestartRequested;
 
+    /// <summary>Gracz zaczął pedałować od ostatniego resetu roweru (pierwszy skok pedału). Misja czeka na to, zanim ruszy.</summary>
+    public bool HasPedaled { get; private set; }
+
+    void OnPedalJudged(PedalDrive.Foot foot, PedalDrive.Judgement judgement, float error, float multiplier)
+    {
+        if (judgement == PedalDrive.Judgement.Start) HasPedaled = true;
+    }
+
+    void OnDestroy()
+    {
+        if (pedals != null) pedals.Judged -= OnPedalJudged;
+    }
+
     void Awake()
     {
+        if (pedals != null) pedals.Judged += OnPedalJudged;
         rb = GetComponent<Rigidbody>();
         startPosition = transform.position;
         startYaw = transform.eulerAngles.y;
@@ -706,6 +720,7 @@ public class BikeController : MonoBehaviour
 
     public void ResetBike()
     {
+        HasPedaled = false;
         speed = 0f;
         reverseHeld = false;
         yaw = startYaw;

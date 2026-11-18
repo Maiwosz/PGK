@@ -6,10 +6,12 @@ using UnityEngine.InputSystem;
 /// obraca ją wokół osi sterowania. Kąt jest liczony z położenia kursora rzutowanego
 /// na poziomą płaszczyznę na wysokości chwytu, więc kierownica podąża za dłonią.
 /// Po puszczeniu kierownica sama wraca do środka (szybciej przy większej prędkości).
-/// Komponent powinien wisieć na obiekcie obracającym się razem z kierownicą (oś Y = oś sterowania).
+/// Komponent (logika) wisi na obiekcie roweru; obracany obiekt kierownicy (oś Y = oś sterowania) to osobne pole Assembly.
 /// </summary>
 public class HandlebarSteering : MonoBehaviour
 {
+    [Tooltip("Obiekt obracany razem z kierownicą (widok); oś Y = oś sterowania.")]
+    [SerializeField] Transform assembly;
     [SerializeField] Camera viewCamera;
     [SerializeField] GripHandle[] grips;
 
@@ -75,7 +77,7 @@ public class HandlebarSteering : MonoBehaviour
             targetAngle = Angle;
         }
 
-        transform.localRotation = Quaternion.AngleAxis(Angle, Vector3.up);
+        if (assembly != null) assembly.localRotation = Quaternion.AngleAxis(Angle, Vector3.up);
     }
 
     /// <summary>Puszcza uchwyt i prostuje kierownicę (np. po upadku).</summary>
@@ -84,7 +86,7 @@ public class HandlebarSteering : MonoBehaviour
         if (grabbed != null) EndGrab();
         Angle = 0f;
         targetAngle = 0f;
-        transform.localRotation = Quaternion.identity;
+        if (assembly != null) assembly.localRotation = Quaternion.identity;
     }
 
     void OnDisable()
@@ -159,7 +161,7 @@ public class HandlebarSteering : MonoBehaviour
     bool TryGetMouseAngle(GripHandle grip, Ray ray, out float angle)
     {
         angle = 0f;
-        Transform parent = transform.parent;
+        Transform parent = assembly != null ? assembly.parent : transform.parent;
         Vector3 up = parent != null ? parent.up : Vector3.up;
 
         var plane = new Plane(up, grip.transform.position);
@@ -167,7 +169,7 @@ public class HandlebarSteering : MonoBehaviour
 
         Vector3 world = ray.GetPoint(enter);
         Vector3 local = parent != null ? parent.InverseTransformPoint(world) : world;
-        local -= transform.localPosition;
+        local -= assembly != null ? assembly.localPosition : transform.localPosition;
         local.y = 0f;
 
         if (local.sqrMagnitude < 1e-4f) return false;

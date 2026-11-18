@@ -644,7 +644,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
 --- !u!114 &1863924268 stripped
 MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 1520547435745042105, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
+  m_CorrespondingSourceObject: {fileID: 6355037342713740603, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
   m_PrefabInstance: {fileID: 1863924264}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
@@ -655,7 +655,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::HandlebarSteering
 --- !u!114 &1863924269 stripped
 MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 499284827527437585, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
+  m_CorrespondingSourceObject: {fileID: 7384588490509539697, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
   m_PrefabInstance: {fileID: 1863924264}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 0}
@@ -669,6 +669,28 @@ Camera:
   m_CorrespondingSourceObject: {fileID: 5038485763995587549, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
   m_PrefabInstance: {fileID: 1863924264}
   m_PrefabAsset: {fileID: 0}
+--- !u!114 &1863924274 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 4614839575383314033, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
+  m_PrefabInstance: {fileID: 1863924264}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 549755b2770e06a4896d2217ba59dcf9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RhythmPedaling
+--- !u!114 &1863924275 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 1064062972407711450, guid: cc331125325a29f439c1c4e97b62aa42, type: 3}
+  m_PrefabInstance: {fileID: 1863924264}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f7be5a64137cf2b479b3ddcdd26146d0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HoldPedaling
 --- !u!1 &1987416849
 GameObject:
   m_ObjectHideFlags: 0
@@ -680,6 +702,9 @@ GameObject:
   - component: {fileID: 1987416851}
   - component: {fileID: 1987416850}
   - component: {fileID: 1987416852}
+  - component: {fileID: 1987416853}
+  - component: {fileID: 1987416855}
+  - component: {fileID: 1987416854}
   m_Layer: 0
   m_Name: HUD
   m_TagString: Untagged
@@ -730,17 +755,71 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RhythmHud
   pedals: {fileID: 1863924269}
+  rhythm: {fileID: 1863924274}
+  bike: {fileID: 1863924265}
+  barWidth: 1.8
+  verticalMargin: 0.01
+  glowMinWidth: 0.14
+  glowMaxWidth: 0.22
+  flashTime: 0.28
+--- !u!114 &1987416853
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1987416849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f93ba3f5ead4263419e116c6c35a3777, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HoldHud
+  pedals: {fileID: 1863924269}
+  hold: {fileID: 1863924275}
+  bike: {fileID: 1863924265}
+  barWidth: 1.8
+  verticalMargin: 0.01
+  glowMinWidth: 0.12
+  glowMaxWidth: 0.22
+  flashTime: 0.3
+--- !u!114 &1987416854
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1987416849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0171de31d89dc384e8abc9ba1d3288d0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FatigueHud
+  pedals: {fileID: 1863924269}
   bike: {fileID: 1863924265}
   cam: {fileID: 1863924272}
-  minWidth: 0.05
-  maxWidth: 0.16
-  height: 0.75
-  flashTime: 0.28
-  vignetteStartStamina: 0.6
-  vignetteFullStamina: 0.05
-  vignetteMaxAlpha: 0.9
+  startStamina: 0.6
+  fullStamina: 0.05
+  maxAlpha: 0.9
   fovNarrowing: 7
   smoothing: 3
+--- !u!114 &1987416855
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1987416849}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3dba85666621bd4438b59e51c241bc24, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GearBarHud
+  pedals: {fileID: 1863924269}
+  bike: {fileID: 1863924265}
+  barHeight: 1.1
+  glowHeight: 0.18
+  glowAlpha: 0.8
+  smoothing: 10
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

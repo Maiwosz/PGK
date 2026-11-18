@@ -4325,6 +4325,10 @@ GameObject:
   - component: {fileID: 5993881098786709549}
   - component: {fileID: 7764569210779780763}
   - component: {fileID: 3253827181401127509}
+  - component: {fileID: 7384588490509539697}
+  - component: {fileID: 4614839575383314033}
+  - component: {fileID: 1064062972407711450}
+  - component: {fileID: 6355037342713740603}
   m_Layer: 0
   m_Name: Bike
   m_TagString: Untagged
@@ -4429,8 +4433,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f2fc0667b6f8e8b42a62bb1206c767b0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BikeController
-  pedals: {fileID: 499284827527437585}
-  steering: {fileID: 1520547435745042105}
+  pedals: {fileID: 7384588490509539697}
+  steering: {fileID: 6355037342713740603}
   leanPivot: {fileID: 3785117507877558918}
   spinningWheels:
   - {fileID: 7661074441952920437}
@@ -4473,7 +4477,128 @@ MonoBehaviour:
   frontContactZ: 0.57
   fullSeverityImpactSpeed: 10
   cameraRadius: 0.15
+  fallOutDepth: 6
+  stepClimbMinGap: 0.012
+  stepClimbPitchMargin: 0.08
+  stepClimbTopMargin: 0.1
+  stepClimbGain: 8
+  groundClearance: 0.02
+  hoverEnterHeight: 0.06
+  hoverExitHeight: 0.02
+  tireRadius: 0.3575
+  wheelAxleFront: 0.57
+  wheelAxleRear: 0.55
+  climbCeilingMargin: 0.04
   lockedBrakeDeceleration: 5
+--- !u!114 &7384588490509539697
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4163419856210308073}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8d4c185bf10ff54cb57daa6e63992a9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PedalDrive
+  mode: {fileID: 1064062972407711450}
+  leftKey: 15
+  rightKey: 18
+  chainrings: 1c0000002600000030000000
+  cogs: 200000001c000000180000001500000012000000100000000e000000
+  gearCount: 7
+  startOptimumSpeed: 3
+  wheelRadius: 0.34
+  totalMass: 85
+  peakTorque: 60
+  maxCrankOmega: 18
+  drivetrainEfficiency: 0.97
+  minEffectiveSpeed: 1.5
+  minStrokeTime: 0.07
+  maxStrokeTime: 1.6
+  sweetPowerFraction: 0.95
+  staminaRegen: 0.05
+  regenStreak: 3
+  staminaCoastRegen: 0.03
+  penaltyStartStamina: 0.5
+  minPedalSpeedFactor: 0.35
+  tailTime: 0.1
+  tailFloor: 0.5
+  crank: {fileID: 7805644896330359250}
+  crankFollowSpeed: 1500
+  leftPedal: {fileID: 4748437592304699267}
+  rightPedal: {fileID: 7583709733214851187}
+--- !u!114 &4614839575383314033
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4163419856210308073}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 549755b2770e06a4896d2217ba59dcf9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RhythmPedaling
+  tempoScale: 0.6
+  perfectWindow: 0.045
+  perfectFraction: 0.1
+  graceWindow: 0.09
+  graceFraction: 0.22
+  earlyRejectFraction: 0.5
+  lateLimit: 0.5
+  lateLimitFraction: 0.9
+  perfectMultiplier: 1.5
+  goodMultiplier: 1
+  poorMultiplier: 0.4
+  missStamina: 0.04
+  perfectStamina: 0.006
+  timingOffset: 0
+--- !u!114 &1064062972407711450
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4163419856210308073}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f7be5a64137cf2b479b3ddcdd26146d0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HoldPedaling
+  tempoScale: 1
+  graceTime: 0.12
+  reverseSpeedFactor: 1
+  bufferTime: 0.12
+  lateLimit: 0.5
+  lateLimitFraction: 0.9
+  chainWindow: 0.08
+  goodGap: 0.35
+  missStamina: 0.04
+  perfectStamina: 0.006
+--- !u!114 &6355037342713740603
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4163419856210308073}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 260202558d1ab814889755e9dfb1b976, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HandlebarSteering
+  assembly: {fileID: 881567434318337604}
+  viewCamera: {fileID: 5038485763995587549}
+  grips:
+  - {fileID: 3077701245273609845}
+  - {fileID: 5504530689700185160}
+  maxAngle: 55
+  followSharpness: 30
+  reachDistance: 5
+  returnBase: 35
+  returnPerSpeed: 25
 --- !u!1 &4211735635066118494
 GameObject:
   m_ObjectHideFlags: 0
@@ -4573,7 +4698,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 881567434318337604}
-  - component: {fileID: 1520547435745042105}
   m_Layer: 0
   m_Name: SteeringAssembly
   m_TagString: Untagged
@@ -4605,27 +4729,6 @@ Transform:
   - {fileID: 389362234347555949}
   m_Father: {fileID: 3785117507877558918}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1520547435745042105
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4418064137803454211}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 260202558d1ab814889755e9dfb1b976, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::HandlebarSteering
-  viewCamera: {fileID: 5038485763995587549}
-  grips:
-  - {fileID: 3077701245273609845}
-  - {fileID: 5504530689700185160}
-  maxAngle: 55
-  followSharpness: 30
-  reachDistance: 5
-  returnBase: 35
-  returnPerSpeed: 25
 --- !u!1 &4690014183318607558
 GameObject:
   m_ObjectHideFlags: 0
@@ -6466,7 +6569,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 7805644896330359250}
-  - component: {fileID: 499284827527437585}
   m_Layer: 0
   m_Name: Crank
   m_TagString: Untagged
@@ -6494,40 +6596,6 @@ Transform:
   - {fileID: 4748437592304699267}
   m_Father: {fileID: 3785117507877558918}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &499284827527437585
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 6683427556623046428}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c8d4c185bf10ff54cb57daa6e63992a9, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::PedalDrive
-  leftKey: 15
-  rightKey: 18
-  chainrings: 1c0000002600000030000000
-  cogs: 200000001c000000180000001500000012000000100000000e000000
-  wheelRadius: 0.34
-  totalMass: 85
-  peakTorque: 60
-  maxCrankOmega: 18
-  drivetrainEfficiency: 0.97
-  minEffectiveSpeed: 1.5
-  minStrokeTime: 0.07
-  maxStrokeTime: 1.6
-  tailTime: 0.1
-  tailFloor: 0.5
-  sweetPowerFraction: 0.95
-  staminaRegen: 0.05
-  staminaCoastRegen: 0.03
-  penaltyStartStamina: 0.5
-  minPedalSpeedFactor: 0.35
-  crankFollowSpeed: 1500
-  leftPedal: {fileID: 4748437592304699267}
-  rightPedal: {fileID: 7583709733214851187}
 --- !u!1 &6745098104574306972
 GameObject:
   m_ObjectHideFlags: 0

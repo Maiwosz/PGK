@@ -136,8 +136,11 @@ public static class BikePrototypeBuilder
         BuildFrame(visual, m);
         Transform rearWheel = BuildWheel(visual, "RearWheel", new Vector3(0f, WheelRadius, RearAxleZ), m);
 
-        // Korba + pedały.
-        PedalDrive pedals = BuildCrank(visual, m);
+        // Korba + pedały (tylko wizualizacja; logika pedałowania i trybów siedzi na obiekcie roweru).
+        Transform crank = BuildCrank(visual, m);
+        PedalDrive pedals = root.AddComponent<PedalDrive>();
+        root.AddComponent<RhythmPedaling>();
+        var hold = root.AddComponent<HoldPedaling>();   // domyślny tryb: przytrzymanie
 
         // Zespół kierownicy (obraca się wokół osi pionowej w główce ramy).
         var steeringGo = new GameObject("SteeringAssembly");
@@ -145,7 +148,8 @@ public static class BikePrototypeBuilder
         Vector3 pivot = new Vector3(0f, 0.92f, 0.45f);
         steeringGo.transform.localPosition = pivot;
         Transform frontWheel = BuildSteeringAssembly(steeringGo.transform, pivot, m, out GripHandle[] grips);
-        var steering = steeringGo.AddComponent<HandlebarSteering>();
+        var steering = root.AddComponent<HandlebarSteering>();   // logika na rowerze, obraca obiekt SteeringAssembly
+        SetRef(steering, "assembly", steeringGo.transform);
 
         // Kamera z perspektywy rowerzysty, patrząca lekko w dół na kierownicę.
         var camRig = new GameObject("CameraRig").transform;
@@ -165,8 +169,10 @@ public static class BikePrototypeBuilder
         // Okablowanie referencji.
         SetRef(steering, "viewCamera", cam);
         SetRefs(steering, "grips", grips);
-        SetRef(pedals, "leftPedal", pedals.transform.Find("PedalLeft"));
-        SetRef(pedals, "rightPedal", pedals.transform.Find("PedalRight"));
+        SetRef(pedals, "mode", hold);
+        SetRef(pedals, "crank", crank);
+        SetRef(pedals, "leftPedal", crank.Find("PedalLeft"));
+        SetRef(pedals, "rightPedal", crank.Find("PedalRight"));
 
         SetRef(controller, "pedals", pedals);
         SetRef(controller, "steering", steering);
@@ -263,7 +269,7 @@ public static class BikePrototypeBuilder
         return wheel;
     }
 
-    static PedalDrive BuildCrank(Transform visual, Mats m)
+    static Transform BuildCrank(Transform visual, Mats m)
     {
         var crank = new GameObject("Crank").transform;
         crank.SetParent(visual, false);
@@ -286,7 +292,7 @@ public static class BikePrototypeBuilder
         left.localPosition = new Vector3(-0.07f, -arm, 0f);
         Prim(PrimitiveType.Cube, "PedalBody", left, new Vector3(-0.06f, 0f, 0f), new Vector3(0.1f, 0.02f, 0.1f), m.Rubber);
 
-        return crank.gameObject.AddComponent<PedalDrive>();
+        return crank;
     }
 
     static Transform BuildSteeringAssembly(Transform asm, Vector3 pivot, Mats m, out GripHandle[] grips)

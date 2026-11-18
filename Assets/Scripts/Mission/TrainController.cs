@@ -47,6 +47,8 @@ public class TrainController : MonoBehaviour
     public Transform CargoCar { get; private set; }
     /// <summary>Gdy true, pociąg hamuje i staje (np. po wygranej misji).</summary>
     public bool Halted { get; set; }
+    /// <summary>Gdy true, pociąg stoi, a odliczanie do ruszenia nie biegnie (misja czeka, aż gracz zacznie pedałować).</summary>
+    public bool Waiting { get; set; }
     /// <summary>Ile sekund zostało do ruszenia pociągu.</summary>
     public float TimeToStart => Mathf.Max(0f, startDelay - elapsed);
     public float Speed => speed;
@@ -89,6 +91,7 @@ public class TrainController : MonoBehaviour
 
     void FixedUpdate()
     {
+        if (Waiting) { Place(true); return; }     // stoi na miejscu (ustawiony na torze), czas do ruszenia nie biegnie
         float dt = Time.fixedDeltaTime;
         elapsed += dt;
         if (elapsed >= startDelay)
